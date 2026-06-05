@@ -1,0 +1,29 @@
+{
+  "schema": 2,
+  "values": {
+    "max_ammo": 186.78,
+    "player_speed": 5,
+    "shield_duration": 300,
+    "max_health": 100,
+    "damage": 1.4,
+    "fire_rate": 1.0,
+    "crit_chance": 0.0,
+    "crit_damage": 1.5,
+    "coin_multiplier": 1.0,
+    "exp_multiplier": 1.0,
+    "weapon_damage": 1.0
+  },
+  "levels": {
+    "max_ammo": 4,
+    "player_speed": 0,
+    "shield_duration": 0,
+    "max_health": 0,
+    "damage": 1,
+    "fire_rate": 0,
+    "crit_chance": 0,
+    "crit_damage": 0,
+    "coin_multiplier": 0,
+    "exp_multiplier": 0,
+    "weapon_damage": 0
+  }
+}
