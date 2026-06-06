@@ -27,14 +27,31 @@ stars = [(random.randint(0, 2*SCREEN_WIDTH), random.randint(0, SCREEN_HEIGHT)) f
 class Game:
     def __init__(self):
         # Pygame is already initialized in shooter.py
-        # Get screen info for full screen
+        # v3 upgrade polish (PR12): default windowed (960x720) for UX + dev friendliness. Persisted 'fullscreen' setting respected.
+        # Never forces desktop FULLSCREEN unless explicitly enabled in settings. F11 toggle wired in game states.
+        # This removes the prior forced override noted in DESIGN.
+        try:
+            pers = get_persistence()
+            s = pers.load_settings()
+            want_full = bool(s.get('fullscreen', False))
+        except Exception:
+            want_full = False
+            s = {}
+
         info = pygame.display.Info()
         global SCREEN_WIDTH, SCREEN_HEIGHT
-        SCREEN_WIDTH = info.current_w
-        SCREEN_HEIGHT = info.current_h
-        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN)
+        if want_full:
+            SCREEN_WIDTH = info.current_w
+            SCREEN_HEIGHT = info.current_h
+            display_flags = pygame.FULLSCREEN
+        else:
+            SCREEN_WIDTH = 960
+            SCREEN_HEIGHT = 720
+            display_flags = 0
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), display_flags)
         pygame.display.set_caption("Space Shooter: Stellar Vanguard (v3.0)")
         self.clock = pygame.time.Clock()
+        self.fullscreen = want_full  # for toggle and HUD if wanted
         # Sync global screen size so enemy spawn (enemies.py), bullets etc use full res not stale 800
         try:
             import config as cfg
@@ -135,6 +152,7 @@ class Game:
         self.selected_item = 0
         self.paused = False
         self.god_mode = False
+        self.show_mission_panel = False  # TAB to expand full mission objectives panel
         self.enemy_timer = 0
         self.combo_timer = 0
         self.combo = 0
@@ -313,6 +331,40 @@ class Game:
         self.shake_timer = duration
         self.shake_intensity = intensity
 
+    def toggle_fullscreen(self):
+        """v3 polish: toggle between windowed and fullscreen, persist choice, recreate display + stars without losing run state."""
+        self.fullscreen = not getattr(self, 'fullscreen', False)
+        try:
+            pers = get_persistence()
+            s = pers.load_settings()
+            s['fullscreen'] = self.fullscreen
+            pers.save_settings(s)
+        except Exception:
+            pass
+        info = pygame.display.Info()
+        global SCREEN_WIDTH, SCREEN_HEIGHT
+        if self.fullscreen:
+            SCREEN_WIDTH = info.current_w
+            SCREEN_HEIGHT = info.current_h
+            flags = pygame.FULLSCREEN
+        else:
+            SCREEN_WIDTH = 960
+            SCREEN_HEIGHT = 720
+            flags = 0
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), flags)
+        try:
+            import config as cfg
+            cfg.SCREEN_WIDTH = SCREEN_WIDTH
+            cfg.SCREEN_HEIGHT = SCREEN_HEIGHT
+        except Exception:
+            pass
+        # Recreate parallax stars for new res (keeps game feel)
+        self.stars = [(random.randint(0, 2 * SCREEN_WIDTH), random.randint(0, SCREEN_HEIGHT)) for _ in range(300)]
+        self.slow_stars = [(random.randint(0, 2 * SCREEN_WIDTH), random.randint(0, SCREEN_HEIGHT)) for _ in range(100)]
+        self.fast_stars = [(random.randint(0, 2 * SCREEN_WIDTH), random.randint(0, SCREEN_HEIGHT)) for _ in range(100)]
+        # Optional: nudge renderer/camera if live, but state draw will pick up self.screen
+        print(f"[Stellar Vanguard] Fullscreen: {self.fullscreen} @ {SCREEN_WIDTH}x{SCREEN_HEIGHT}")
+
     def apply_difficulty(self):
         if self.difficulty == 'easy':
             self.enemy_speed = 2
@@ -353,6 +405,7 @@ class Game:
         self.style_rank = "D"
         self.style_points = 0
         self.death_animation_timer = 0
+        self.show_mission_panel = False
         if not self.continuing:
             self.player.lives = 3 + self.extra_lives
         self.player.active_powerups.clear()  # Clear all active powerups
@@ -520,6 +573,16 @@ class Game:
 
         if self.game_mode != MODE_CAMPAIGN and not self.survival and self.score >= self.wave * 500:
             self.wave += 1
+
+        # Mission / objective tracking (supports visible missions HUD + boss approach bar)
+        if self.game_mode == MODE_CAMPAIGN:
+            if not hasattr(self, 'survival_time'):
+                self.survival_time = 0.0
+            self.survival_time += 1.0 / 60.0
+            if not hasattr(self, 'damage_taken_this_level'):
+                self.damage_taken_this_level = 0
+            if not hasattr(self, 'powerups_collected_this_level'):
+                self.powerups_collected_this_level = 0
 
         # Boss trigger example (session may also signal)
         if not self.survival and self.wave > getattr(self, 'boss_wave', 3) and self.wave % 3 == 0:

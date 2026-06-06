@@ -87,6 +87,10 @@ class Player(pygame.sprite.Sprite):
         self.speed_multiplier = 1.0
         self.change_x = 0
         self.change_y = 0
+        # For live animation on upgraded art (bank lean + thrust pulse)
+        self._base_image = None
+        self._visual_lean = 0.0
+        self._visual_scale = 1.0
 
     def update(self):
         # During death animation, just handle visual effects, no movement
@@ -103,14 +107,20 @@ class Player(pygame.sprite.Sprite):
         else:
             # Use keyboard
             effective_speed = getattr(self, 'speed', 5) * getattr(self, 'speed_multiplier', 1.0)
+            self.change_x = 0
+            self.change_y = 0
             if (keys[pygame.K_LEFT] or keys[pygame.K_a]) and self.rect.left > 0:
                 self.rect.x -= effective_speed
+                self.change_x = -effective_speed
             if (keys[pygame.K_RIGHT] or keys[pygame.K_d]) and self.rect.right < SCREEN_WIDTH:
                 self.rect.x += effective_speed
+                self.change_x = effective_speed
             if (keys[pygame.K_UP] or keys[pygame.K_w]) and self.rect.top > 0:
                 self.rect.y -= effective_speed
+                self.change_y = -effective_speed
             if (keys[pygame.K_DOWN] or keys[pygame.K_s]) and self.rect.bottom < SCREEN_HEIGHT:
                 self.rect.y += effective_speed
+                self.change_y = effective_speed
         # Clamp position
         self.rect.x = max(0, min(self.rect.x, SCREEN_WIDTH - self.rect.width))
         self.rect.y = max(0, min(self.rect.y, SCREEN_HEIGHT - self.rect.height))
@@ -118,6 +128,35 @@ class Player(pygame.sprite.Sprite):
         # Update hitbox position to match rect
         self.hitbox.centerx = self.rect.centerx
         self.hitbox.centery = self.rect.centery
+
+        # --- Technically impressive engine thrust trail (always when moving) ---
+        speed_sq = (self.change_x or 0)**2 + (self.change_y or 0)**2
+        if speed_sq > 0.5 or (hasattr(self, 'dashing') and self.dashing):
+            from particles import emit_thrust
+            # Emit from approximate engine ports (rear of ship)
+            ex = self.rect.centerx - 18
+            ey = self.rect.centery + random.randint(-4, 4)
+            vx = getattr(self, 'change_x', 0) or 0
+            vy = getattr(self, 'change_y', 0) or 0
+            emit_thrust(self.game.particles, ex, ey, vx, vy, count=2 if not getattr(self,'dashing',False) else 5)
+
+        # Live animation on the (upgraded v4 or procedural) ship image: banking lean when moving vertically + scale pulse on boost/dash.
+        # This makes even static PNG assets feel fully animated and responsive.
+        try:
+            if self._base_image is None:
+                self._base_image = self.image.copy()
+            lean = getattr(self, '_visual_lean', 0.0) * 0.65 + float(getattr(self, 'change_y', 0) or 0) * -0.55
+            self._visual_lean = lean
+            boost = 1.0 + (0.09 if getattr(self, 'dashing', False) else 0.025 if abs(getattr(self, 'change_x', 0) or 0) > 1.5 else 0.0)
+            self._visual_scale = boost
+            if abs(lean) > 0.8 or self._visual_scale > 1.01:
+                transformed = pygame.transform.rotozoom(self._base_image, lean * 0.55, self._visual_scale)
+                old_center = self.rect.center
+                self.image = transformed
+                self.rect = self.image.get_rect(center=old_center)
+                self.hitbox.center = self.rect.center
+        except Exception:
+            pass
         # Dash logic
         if keys[pygame.K_LSHIFT] and self.dash_cooldown == 0 and not self.dashing:
             self.dashing = True
@@ -207,6 +246,17 @@ class Player(pygame.sprite.Sprite):
             self.weapon = 'normal'
         
         if self.energy > 0 or self.weapon == 'normal':
+            # Muzzle flash + impressive FX at business end of ship (technically rich)
+            try:
+                from particles import emit_muzzle, emit_thrust
+                mx = self.rect.right + 4
+                my = self.rect.centery + random.randint(-2, 2)
+                emit_muzzle(self.game.particles, mx, my, count=3)
+                # small backward kick particles for weight
+                emit_thrust(self.game.particles, self.rect.centerx - 8, self.rect.centery, -3, 0, count=1)
+            except Exception:
+                pass
+
             # Check for kamikaze powerup - overrides normal shooting
             if 'kamikaze' in self.active_powerups:
                 if self.energy >= 2:

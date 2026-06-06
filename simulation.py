@@ -323,7 +323,23 @@ class SimulationWorld:
                 pass
 
         # Boss trigger (high level, state change may happen via game callback)
-        if not (getattr(self.game, 'survival', False)) and self.wave > getattr(self.game, 'boss_wave', 3) and self.wave % 3 == 0:
+        # Improved: also respect campaign boss_fight + progress bar
+        triggered = False
+        if getattr(self.game, 'boss_fight', False) and not getattr(self.game, 'boss_spawned', False):
+            prog = 0.0
+            try:
+                if hasattr(self.game, 'level_manager') and self.game.level_manager:
+                    prog = self.game.level_manager.get_boss_approach()
+            except:
+                killed = getattr(self.game, 'enemies_killed_this_level', 0)
+                req = max(10, getattr(self.game, 'enemies_required', 20))
+                prog = min(1.0, killed / float(req))
+            if prog >= 0.82:  # close enough per the bar
+                triggered = True
+        if not triggered and not (getattr(self.game, 'survival', False)) and self.wave > getattr(self.game, 'boss_wave', 3) and self.wave % 3 == 0:
+            triggered = True
+
+        if triggered and not getattr(self.game, 'boss_spawned', False):
             if hasattr(self.game, 'change_state'):
                 from game_states import BossIncomingState
                 self.game.change_state(BossIncomingState(self.game))
@@ -389,7 +405,10 @@ class SimulationWorld:
                 if hasattr(self.game, 'damage_flash_timer'):
                     self.game.damage_flash_timer = 15
             else:
-                self.player.health -= 20
+                dmg = 20
+                self.player.health -= dmg
+                if self.game.game_mode == MODE_CAMPAIGN:
+                    self.game.damage_taken_this_level = getattr(self.game, 'damage_taken_this_level', 0) + dmg
                 if hasattr(self.game, 'damage_flash_timer'):
                     self.game.damage_flash_timer = 10
                 if self.player.health <= 0:
@@ -526,6 +545,11 @@ class SimulationWorld:
         pu_hits = [pu for pu in self.powerups if self.player.hitbox.colliderect(pu.rect)]
         for pu in pu_hits:
             pu.kill()
+            # Track for missions / objectives
+            if self.game.game_mode == MODE_CAMPAIGN:
+                if not hasattr(self.game, 'powerups_collected_this_level'):
+                    self.game.powerups_collected_this_level = 0
+                self.game.powerups_collected_this_level += 1
             self.apply_powerup(pu)
 
     def handle_enemy_death(self, enemy):
@@ -572,9 +596,15 @@ class SimulationWorld:
             self.game.enemies_killed += 1
         if hasattr(self.game, 'enemies_killed_this_level'):
             self.game.enemies_killed_this_level += 1
-        for _ in range(10):
-            p = Particle(enemy.rect.centerx, enemy.rect.centery, (255,0,0), 'explosion')
-            self.particles.append(p)
+        # Rich impressive death FX
+        try:
+            from particles import emit_explosion
+            intensity = 1.0 + min(1.0, getattr(enemy, 'health', 1) / 3.0)  # bigger for tankier enemies
+            emit_explosion(self.particles, enemy.rect.centerx, enemy.rect.centery, intensity=intensity)
+        except Exception:
+            for _ in range(10):
+                p = Particle(enemy.rect.centerx, enemy.rect.centery, (255,0,0), 'explosion')
+                self.particles.append(p)
         if random.random() < 0.3:
             try:
                 from powerups import PowerUp

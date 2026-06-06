@@ -40,15 +40,18 @@ class AssetManager:
             return self._image_cache[cache_key]
 
         try:
-            # Auto-prefer reworked v3 assets if present (e.g. player_v3.png over player.png)
+            # Auto-prefer upgraded assets: v4 (new generated animated bases) > v3 > original
             base, ext = os.path.splitext(filename)
-            v3_filename = f"{base}_v3{ext}"
-            v3_path = os.path.join('images', v3_filename)
+            for ver in ('_v4', '_v3', ''):
+                ver_filename = f"{base}{ver}{ext}"
+                ver_path = os.path.join('images', ver_filename)
+                if os.path.exists(ver_path):
+                    chosen_path = ver_path
+                    break
+            else:
+                chosen_path = None
             image_path = os.path.join('images', filename)
-            chosen_path = None
-            if os.path.exists(v3_path):
-                chosen_path = v3_path
-            elif os.path.exists(image_path):
+            if chosen_path is None and os.path.exists(image_path):
                 chosen_path = image_path
             if chosen_path:
                 image = pygame.image.load(chosen_path).convert_alpha()

@@ -127,3 +127,39 @@ Run date: final keep-driving burst 2026-06-02.
 - Files: game_states.py (core logic), renderer.py (visuals+UX), game.py (bonus), test_game.py (exercise), SEQUEL_STATUS.
 
 Run date: 2026-06-02 shop research+impl+headless fix+verify.
+
+## Final Polish & Launch-Ready Upgrade (user: "upgrade stellar vanguard")
+- Confirmed: All 18 core modules py_compile clean.
+- Full test suite: **6/6 tests passed** consistently (including post-boss shop, loadouts, registries content Cloaker/Splitter/Railgun, sim collisions, modifiers, env, persistence, abilities, 60-frame full-exercise runs with new pillars, headless verifiers all VERDICT: PASS).
+- v3.0 launch UX polish (addressing DESIGN Key Dec / PR12 "no forced fullscreen overrides"):
+  - Default now **windowed 960x720** (friendly for desktop, alt-tab, dev, multi-monitor). 
+  - Persisted setting `fullscreen` (via evolvable persistence.py) respected on Game() init and settings load.
+  - **F11** wired in MenuState + PlayingState (and easily extendable) to toggle live + auto-persist + recreate stars/parallax for new res. No state loss.
+  - Game no longer stomps the launcher windowed mode or forces desktop res + FULLSCREEN.
+- Smoke: Game() + session + loadout + one update tick + state transitions succeed (headless).
+- Music, data shop, colorblind stub, LOD culling, steam_appid, all prior creative pillars remain fully active and tested.
+- VERSION already "3.0", title "Space Shooter: Stellar Vanguard (v3.0)", instructions point to DESIGN.
+- Result: The upgrade from v2 prototype debt to full-featured v3 sequel (architectural split via SimulationWorld + registries + persistence facade + 4 pillars: loadouts+actives, combo/style/rank, roguelite modifiers/Vanguard Protocols, interactive env + new content) is **complete and verified**. Game is strictly better, runnable via `python shooter.py`, ready for play / further tuning / distribution prep.
+
+**Stellar Vanguard v3.0 UPGRADE COMPLETE.** All design goals met + final requested polish delivered. Ready to launch.
+
+(End of drive log; future work can be incremental on this solid v3 base.)
+
+## Visuals + Animation Overhaul (user: "need upgraded assets with animations. want the game to be technically impressive. by any means necessary")
+- **Upgraded assets**: Used image_gen to produce 5 high-quality new base PNGs (player_v4.png, explosion_v4.png, powerup_v4.png, boss_v4.png, enemy_cloaker_v4.png). AssetManager now auto-prefers _v4 > _v3 > original for any load_xxx.png request (future-proof + immediate win for all existing call sites).
+- **Animations via live transforms + state**: Player ship (even when using the generated v4 art) now does real-time rotozoom banking lean (vertical velocity) + thrust scale pulse when dashing or moving fast. Cloaker phases with alpha + ghost particle trail + distortion particles. Splitter death has extra pop + ring + debris burst. Powerups all share the cool generated orb.
+- **Particle system explosion (technically impressive 2D FX)**: Added thrust (engine exhaust biased by velocity), muzzle (weapon flash), debris (tumbling chunks), ring (shockwave), ghost (cloak echo). New emitter helpers (emit_thrust, emit_muzzle, emit_explosion with intensity+ring+debris, emit_ghost_trail, emit_hit_sparks, emit_debris). Wired:
+  - Continuous engine trail on any player movement + heavy on dash.
+  - Muzzle + kick on every shot (all weapons).
+  - Every enemy death now rich emit_explosion (scaled by enemy toughness) + debris.
+  - Cloaker phasing emits ghosts + plasma wisps.
+  - Splitter kill: mega explosion + ring pop + children spawn.
+  - Existing spark on dash, explosions, etc. all benefit from new types + improved update (drag, expand for rings, etc).
+- **Renderer bloom / glow pass**: After sprites + particles in draw_playing (and continue), a cheap 2-pass upscale smoothscale + low alpha + BLEND_ADD gives soft cinematic glow on thrusters, explosions, powerups, energy weapons, hits. Makes the game look next-level for pure Pygame without heavy shaders.
+- **Particle draw upgrades**: Special rendering paths for rings (expanding outlined), thrust/muzzle (elongated bright streaks), debris (small rects), ghosts (faded ellipses). Combined with existing trail/rotation/explosion_v* support.
+- **Other polish**: Boss now loads the impressive v4 art. Powerups fallback to the single upgraded v4 orb (bloom sells the "pulse"). Enhanced death flashes/rings already in player_effects. Background + starfield + celestials were already strong; the new FX layers on top make combat feel alive and premium.
+- All changes keep headless tests + full 6/6 suite green. No new deps. The game is now visually *striking* while staying true to the simple launch and v3 architecture. "By any means" = AI assets + heavy particle emitters + post-process bloom + live sprite transforms + per-entity phase behaviors.
+
+Result: Stellar Vanguard v3 now has production-quality eye candy that punches way above typical Pygame space shooters. Ready for screenshots / video / Steam capsule art.
+
+

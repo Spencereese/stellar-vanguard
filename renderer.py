@@ -362,6 +362,32 @@ class Renderer:
                         pass
                 surface.blit(particle_surf, (px - size, py - size))
 
+            # New impressive types
+            ptype = getattr(p, 'particle_type', '')
+            if ptype == 'ring':
+                r = max(2, int(getattr(p, 'size', 8)))
+                ring_surf = pygame.Surface((r*2+4, r*2+4), pygame.SRCALPHA)
+                pygame.draw.circle(ring_surf, (*color, max(10, alpha)), (r+2, r+2), r, max(1, r//7))
+                surface.blit(ring_surf, (px - r-2, py - r-2))
+            elif ptype in ('thrust', 'muzzle'):
+                # Elongated bright streak for engine/muzzle
+                streak = pygame.Surface((size*3, size), pygame.SRCALPHA)
+                pygame.draw.ellipse(streak, (*color, alpha), (0, 0, size*3, size))
+                # point backward for thrust feel
+                surface.blit(streak, (px - size*2, py - size//2))
+            elif ptype == 'debris':
+                # Tiny tumbling metal chunk
+                deb = pygame.Surface((size+2, size+2), pygame.SRCALPHA)
+                pygame.draw.rect(deb, (*color, alpha), (1,1,size,size))
+                if getattr(p, 'rotation', 0):
+                    deb = pygame.transform.rotate(deb, p.rotation)
+                surface.blit(deb, (px-size//2, py-size//2))
+            elif ptype == 'ghost':
+                # Faded afterimage rectangle (ship-like silhouette hint)
+                gsurf = pygame.Surface((size*2, size), pygame.SRCALPHA)
+                pygame.draw.ellipse(gsurf, (*color, max(15, alpha//2)), (0,0,size*2,size))
+                surface.blit(gsurf, (px - size, py - size//2))
+
     def draw_player_effects_to_surface(self, game, surface):
         """Draw player special effects to a surface (death, shield, invincibility)"""
         # Draw death animation effect on player
@@ -497,6 +523,71 @@ class Renderer:
             combo_surf = self.render_shadowed_text(combo_text, YELLOW, game.small_font)
             surface.blit(combo_surf, (10, 35))
 
+        # === Compact Mission Panel (always visible) ===
+        # Small boxed "Mission Panel" in top-left for expanded feel
+        try:
+            if hasattr(game, 'level_manager') and game.level_manager:
+                mdata = game.level_manager.get_mission_data()
+                panel_x, panel_y = 8, 55
+                panel_w, panel_h = 280, 38
+
+                # Panel background
+                panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+                panel.fill((15, 20, 35, 210))
+                pygame.draw.rect(panel, (80, 120, 200), (0, 0, panel_w, panel_h), 1)
+                surface.blit(panel, (panel_x, panel_y))
+
+                # Title
+                title = self.render_shadowed_text("MISSION", (100, 180, 255), game.tiny_font)
+                surface.blit(title, (panel_x + 6, panel_y + 3))
+
+                # Description (short)
+                desc = mdata.get('description', 'Survive')
+                desc_surf = self.render_shadowed_text(desc[:38], (200, 220, 240), game.tiny_font)
+                surface.blit(desc_surf, (panel_x + 6, panel_y + 18))
+
+                # Mini progress bar on the right of panel
+                p = max(0.0, min(1.0, mdata.get('progress', 0.0)))
+                bar_x = panel_x + panel_w - 72
+                bar_y = panel_y + 22
+                bar_w = 64
+                pygame.draw.rect(surface, (40, 50, 70), (bar_x, bar_y, bar_w, 8))
+                if p > 0:
+                    fill_c = (80, 200, 120) if not mdata.get('is_boss') else (255, 100, 80)
+                    pygame.draw.rect(surface, fill_c, (bar_x, bar_y, int(bar_w * p), 8))
+                pygame.draw.rect(surface, (150, 180, 220), (bar_x, bar_y, bar_w, 8), 1)
+        except Exception:
+            pass
+
+        # Boss approach / proximity bar (prominent when relevant, below the mission panel)
+        boss_prog = 0.0
+        try:
+            if hasattr(game, 'level_manager') and game.level_manager:
+                boss_prog = game.level_manager.get_boss_approach()
+            elif getattr(game, 'boss_fight', False):
+                killed = getattr(game, 'enemies_killed_this_level', 0)
+                req = max(10, getattr(game, 'enemies_required', 20))
+                boss_prog = min(1.0, killed / float(req))
+        except Exception:
+            pass
+
+        if boss_prog > 0.01 or getattr(game, 'boss_fight', False):
+            bbar_w = int(220)
+            bbar_h = 11
+            bbar_x = 10
+            bbar_y = 96   # moved down a bit to sit under the new mission panel
+            # Back
+            pygame.draw.rect(surface, (30, 5, 5), (bbar_x, bbar_y, bbar_w, bbar_h))
+            pygame.draw.rect(surface, (120, 30, 30), (bbar_x, bbar_y, bbar_w, bbar_h), 1)
+            # Fill (red -> bright as it approaches)
+            fill_w = int(bbar_w * boss_prog)
+            fill_col = (255, 90, 60) if boss_prog < 0.85 else (255, 200, 50)
+            if fill_w > 0:
+                pygame.draw.rect(surface, fill_col, (bbar_x, bbar_y, fill_w, bbar_h))
+            # Label
+            blabel = self.render_shadowed_text("BOSS APPROACH", (255, 140, 100), game.tiny_font)
+            surface.blit(blabel, (bbar_x + bbar_w + 8, bbar_y - 1))
+
         # Weapon display (top right)
         weapon_name = str(game.player.weapon).title()
         weapon_surf = self.render_shadowed_text(f"Weapon: {weapon_name}", CYAN, game.small_font)
@@ -523,6 +614,118 @@ class Renderer:
         lives_x = bar_x + bar_width + 10
         lives_y = bar_y - 25
         surface.blit(lives_surf, (lives_x, lives_y))
+
+    def draw_expanded_mission_panel(self, game, surface):
+        """Full featured expandable mission / objectives panel.
+        Called when game.show_mission_panel is True (toggled with TAB in PlayingState).
+        Rich details: multiple progress bars, bonuses, boss emphasis.
+        """
+        vw, vh = surface.get_width(), surface.get_height()
+
+        # Centered semi-transparent panel
+        pw, ph = int(vw * 0.72), int(vh * 0.58)
+        px = (vw - pw) // 2
+        py = int(vh * 0.18)
+
+        # Backdrop + frame
+        panel = pygame.Surface((pw, ph), pygame.SRCALPHA)
+        panel.fill((12, 16, 28, 235))
+        pygame.draw.rect(panel, (70, 110, 180), (0, 0, pw, ph), 2)
+        # Inner accent
+        pygame.draw.rect(panel, (40, 70, 120), (4, 4, pw-8, ph-8), 1)
+        surface.blit(panel, (px, py))
+
+        # Try to get rich data
+        mdata = {}
+        try:
+            if hasattr(game, 'level_manager') and game.level_manager:
+                mdata = game.level_manager.get_mission_data()
+        except Exception:
+            mdata = {'title': 'Mission', 'description': 'Survive', 'progress': 0.0, 'trackers': [], 'is_boss': False, 'estimated_reward': 0}
+
+        # Header
+        header = self.render_shadowed_text("OBJECTIVES  •  " + mdata.get('title', 'CURRENT MISSION'), (120, 180, 255), game.font)
+        surface.blit(header, (px + 20, py + 12))
+
+        # Primary objective box
+        obj_y = py + 55
+        pygame.draw.rect(surface, (25, 30, 45, 200), (px + 16, obj_y, pw - 32, 52))
+        pygame.draw.rect(surface, (100, 140, 200), (px + 16, obj_y, pw - 32, 52), 1)
+
+        prim = self.render_shadowed_text("PRIMARY: " + mdata.get('description', 'Complete objectives'), (230, 240, 255), game.small_font)
+        surface.blit(prim, (px + 26, obj_y + 8))
+
+        # Overall progress bar for primary
+        p = max(0.0, min(1.0, mdata.get('progress', 0.0)))
+        bar_w = pw - 70
+        bar_x = px + 35
+        bar_y = obj_y + 32
+        pygame.draw.rect(surface, (20, 25, 40), (bar_x, bar_y, bar_w, 12))
+        fill_col = (90, 210, 130) if not mdata.get('is_boss') else (255, 110, 80)
+        if p > 0:
+            pygame.draw.rect(surface, fill_col, (bar_x, bar_y, int(bar_w * p), 12))
+        pygame.draw.rect(surface, (160, 190, 230), (bar_x, bar_y, bar_w, 12), 1)
+
+        pct = int(p * 100)
+        pct_txt = self.render_shadowed_text(f"{pct}%", (255, 255, 255), game.tiny_font)
+        surface.blit(pct_txt, (bar_x + bar_w + 6, bar_y - 1))
+
+        # Trackers section
+        track_y = obj_y + 62
+        trackers = mdata.get('trackers', []) or []
+        title_tr = self.render_shadowed_text("PROGRESS TRACKERS", (140, 170, 210), game.tiny_font)
+        surface.blit(title_tr, (px + 20, track_y))
+
+        ty = track_y + 18
+        for tr in trackers[:6]:  # limit to keep it clean
+            name = tr.get('name', 'Metric')
+            cur = tr.get('current', 0)
+            tgt = tr.get('target', 1)
+            perc = max(0.0, min(1.0, tr.get('percent', 0.0)))
+            unit = tr.get('unit', '')
+
+            # Row
+            row_h = 22
+            pygame.draw.rect(surface, (18, 22, 35), (px + 18, ty, pw - 36, row_h))
+            pygame.draw.rect(surface, (55, 80, 130), (px + 18, ty, pw - 36, row_h), 1)
+
+            nm = self.render_shadowed_text(name, (200, 215, 235), game.tiny_font)
+            surface.blit(nm, (px + 26, ty + 3))
+
+            # Small bar
+            sbw = 140
+            sbx = px + pw - 200
+            pygame.draw.rect(surface, (30, 35, 50), (sbx, ty + 5, sbw, 10))
+            if perc > 0:
+                fcol = (70, 190, 110) if not tr.get('invert') else (255, 80, 80)
+                pygame.draw.rect(surface, fcol, (sbx, ty + 5, int(sbw * perc), 10))
+
+            # Value text
+            if isinstance(cur, (int, float)) and isinstance(tgt, (int, float)):
+                val = f"{int(cur)}{unit} / {int(tgt)}{unit}"
+            else:
+                val = f"{cur} / {tgt}"
+            val_surf = self.render_shadowed_text(val, (180, 200, 220), game.tiny_font)
+            surface.blit(val_surf, (sbx - val_surf.get_width() - 8, ty + 2))
+
+            ty += row_h + 3
+
+        # Bonuses / reward footer
+        footer_y = py + ph - 52
+        pygame.draw.rect(surface, (20, 28, 42), (px + 16, footer_y, pw - 32, 38))
+        pygame.draw.rect(surface, (80, 110, 160), (px + 16, footer_y, pw - 32, 38), 1)
+
+        rew = mdata.get('estimated_reward', 0)
+        rew_txt = self.render_shadowed_text(f"Estimated Reward: {rew} coins + bonuses", (255, 220, 100), game.small_font)
+        surface.blit(rew_txt, (px + 26, footer_y + 5))
+
+        hint = self.render_shadowed_text("TAB to close  •  Higher style & speed = better rewards", (140, 150, 170), game.tiny_font)
+        surface.blit(hint, (px + 26, footer_y + 22))
+
+        # Boss special callout
+        if mdata.get('is_boss'):
+            boss_call = self.render_shadowed_text("⚠ BOSS FIGHT — Full power recommended", (255, 140, 80), game.small_font)
+            surface.blit(boss_call, (px + pw - boss_call.get_width() - 22, footer_y + 5))
 
     def draw_menu(self, game):
         def _draw_menu_virtual(game, surface):
@@ -739,9 +942,26 @@ class Renderer:
             self.draw_particles_to_surface(game, surface)
             self.draw_player_effects_to_surface(game, surface)
 
+            # Cheap but very effective bloom/glow pass - makes explosions, thrusters, powerups, energy weapons *pop* (technically impressive 2D)
+            try:
+                small = pygame.transform.smoothscale(surface, (surface.get_width()//3, surface.get_height()//3))
+                bloom = pygame.transform.smoothscale(small, surface.get_size())
+                bloom.set_alpha(22)
+                surface.blit(bloom, (0, 0), special_flags=pygame.BLEND_ADD)
+                # Second wider softer pass for big explosions / engine glow
+                bloom2 = pygame.transform.smoothscale(small, (surface.get_width(), surface.get_height()))
+                bloom2.set_alpha(12)
+                surface.blit(bloom2, (0, 0), special_flags=pygame.BLEND_ADD)
+            except Exception:
+                pass
+
             # UI on virtual surface
             self.draw_boss_health_to_surface(game, surface)
             self.draw_hud_to_surface(game, surface)
+
+            # Expanded mission panel (toggle with TAB) - drawn on virtual for proper scaling/letterbox
+            if getattr(game, 'show_mission_panel', False):
+                self.draw_expanded_mission_panel(game, surface)
 
         # Use helper to render virtual and blit scaled
         self._render_virtual_and_blit(_draw_playing_virtual, game)
@@ -1179,17 +1399,79 @@ class Renderer:
         self._render_virtual_and_blit(_draw_victory_virtual, game)
 
     def draw_boss_incoming(self, game):
-        # Draw the current game state
+        """Polished, non-annoying boss incoming warning.
+        Dimmed gameplay + dramatic red warning elements + buildup bar.
+        No harsh full-screen strobing flash.
+        """
+        # Draw underlying gameplay (slightly dimmed for focus on warning)
         self.draw_playing(game)
-        # Overlay boss incoming warning
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 128))  # Semi-transparent black
-        self.game.screen.blit(overlay, (0, 0))
-        boss_text = self.render_shadowed_text("BOSS INCOMING!", RED, game.font)
-        self.game.screen.blit(boss_text, (SCREEN_WIDTH//2 - boss_text.get_width()//2, SCREEN_HEIGHT//2 - 50))
-        warning_text = self.render_shadowed_text("Prepare yourself!", YELLOW, game.small_font)
-        self.game.screen.blit(warning_text, (SCREEN_WIDTH//2 - warning_text.get_width()//2, SCREEN_HEIGHT//2))
-        pygame.display.flip()
+
+        # Subtle red danger vignette / border (not solid black flash)
+        w, h = SCREEN_WIDTH, SCREEN_HEIGHT
+        vignette = pygame.Surface((w, h), pygame.SRCALPHA)
+        # Red tint edges
+        for i in range(40):
+            alpha = int(6 * (40 - i))
+            pygame.draw.rect(vignette, (180, 20, 20, alpha), (i, i, w - i*2, h - i*2), 3)
+        self.game.screen.blit(vignette, (0, 0))
+
+        # Timer based drama (0 -> 180)
+        t = getattr(game, '_boss_incoming_timer', 0) or 0
+        phase = min(1.0, t / 180.0)
+
+        # Big animated warning text (pulsing scale + intensity, no strobe)
+        pulse = 0.9 + 0.15 * math.sin(t * 0.18)
+        scale = pulse
+        try:
+            base_font = game.font
+            # Main title - grows in intensity
+            title = "BOSS INCOMING"
+            title_surf = base_font.render(title, True, (255, 60, 60))
+            # Simple scale via rotozoom (cheap for one text)
+            if scale != 1.0:
+                title_surf = pygame.transform.rotozoom(title_surf, 0, scale)
+            tx = (w - title_surf.get_width()) // 2
+            ty = int(h * 0.38)
+            # Glow layer behind (multiple offset low alpha)
+            for off in range(3, 0, -1):
+                glow = title_surf.copy()
+                glow.set_alpha(30 + off * 8)
+                self.game.screen.blit(glow, (tx - off, ty - off))
+            self.game.screen.blit(title_surf, (tx, ty))
+        except Exception:
+            # Fallback
+            boss_text = self.render_shadowed_text("BOSS INCOMING!", RED, game.font)
+            self.game.screen.blit(boss_text, (w//2 - boss_text.get_width()//2, int(h * 0.38)))
+
+        # Subtext that changes with phase (buildup feel like other games)
+        sub = "THREAT DETECTED • PREPARE FOR ENGAGEMENT"
+        if phase > 0.33:
+            sub = "WARNING • BOSS APPROACHING"
+        if phase > 0.66:
+            sub = "!! BOSS INCOMING - STAND BY !!"
+        sub_surf = self.render_shadowed_text(sub, (255, 220, 80), game.small_font)
+        self.game.screen.blit(sub_surf, (w//2 - sub_surf.get_width()//2, int(h * 0.38) + 55))
+
+        # Boss approach / danger bar (fills during the warning - very game-like)
+        bar_w = int(w * 0.55)
+        bar_h = 18
+        bar_x = (w - bar_w) // 2
+        bar_y = int(h * 0.38) + 95
+        # Backing
+        pygame.draw.rect(self.game.screen, (40, 10, 10), (bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4))
+        pygame.draw.rect(self.game.screen, (80, 20, 20), (bar_x, bar_y, bar_w, bar_h))
+        # Fill
+        fill = int(bar_w * phase)
+        if fill > 0:
+            pygame.draw.rect(self.game.screen, (255, 70, 50), (bar_x, bar_y, fill, bar_h))
+        # Border + label
+        pygame.draw.rect(self.game.screen, (255, 180, 80), (bar_x, bar_y, bar_w, bar_h), 2)
+        label = self.render_shadowed_text("BOSS GAUGE", (255, 200, 100), game.tiny_font)
+        self.game.screen.blit(label, (bar_x + (bar_w - label.get_width())//2 , bar_y - 22))
+
+        # Small instruction / flavor
+        hint = self.render_shadowed_text("The enemy flagship is near...", (200, 180, 160), game.tiny_font)
+        self.game.screen.blit(hint, (w//2 - hint.get_width()//2, bar_y + 32))
 
     def draw_settings(self, game):
         # Draw gradient background

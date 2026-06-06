@@ -210,6 +210,11 @@ class LevelManager:
         self.game.enemies_killed_this_level = 0
         self.game.enemies_required = level_data['enemy_count']
         self.game.boss_fight = level_data['boss_required']
+        self.game.boss_approach = 0.0  # reset progress toward boss for the bar
+        # Reset mission counters
+        self.game.survival_time = 0.0
+        self.game.damage_taken_this_level = 0
+        self.game.powerups_collected_this_level = 0
 
         # Store current level data for reference
         self.current_level_data = level_data
@@ -339,6 +344,145 @@ class LevelManager:
         """Advance to next level - now infinite"""
         self.current_level += 1
         return self.start_level(self.current_level)
+
+    def get_mission_description(self):
+        """Human readable current mission for HUD / missions system."""
+        if not hasattr(self, 'current_level_data') or not self.current_level_data:
+            return "Survive the onslaught"
+        data = self.current_level_data
+        if data.get('boss_required'):
+            return "PRIMARY: Defeat the Boss"
+        obj = data.get('objective_type', 'kill_enemies')
+        req = data.get('enemy_count', 0)
+        killed = getattr(self.game, 'enemies_killed_this_level', 0)
+        if obj == 'kill_enemies':
+            return f"MISSION: Eliminate hostiles ({killed}/{req})"
+        elif obj == 'survive_time':
+            t = int(getattr(self.game, 'survival_time', 0))
+            return f"MISSION: Survive assault ({t}s / 60s)"
+        elif obj == 'collect_powerups':
+            p = getattr(self.game, 'powerups_collected_this_level', 0)
+            return f"MISSION: Collect power-ups ({p}/5)"
+        elif obj == 'no_damage':
+            return "MISSION: Zero damage run"
+        return "MISSION: Complete objectives"
+
+    def get_boss_approach(self):
+        """0.0 to 1.0 - how close the player is to facing the boss.
+        Used for the 'boss proximity' bar in HUD."""
+        if not getattr(self.game, 'boss_fight', False):
+            # For non-campaign or wave-based: approximate from wave
+            wave = getattr(self.game, 'wave', 1)
+            last = getattr(self.game, 'boss_wave', 3)
+            if wave <= last:
+                return 0.0
+            return min(1.0, ((wave - last) % 3) / 3.0)
+        data = getattr(self, 'current_level_data', {}) or {}
+        killed = getattr(self.game, 'enemies_killed_this_level', 0)
+        req = max(8, data.get('enemy_count', 20))
+        # Boss usually spawns after significant progress ( ~70-80% of required kills or explicit trigger)
+        return min(1.0, killed / float(req * 0.75))
+
+    def get_mission_data(self):
+        """Rich structured data for expanded mission panel.
+        Returns dict with title, primary objective, trackers, bonuses, etc."""
+        if not hasattr(self, 'current_level_data') or not self.current_level_data:
+            return {
+                'title': 'Survive',
+                'description': 'Survive the onslaught',
+                'progress': 0.0,
+                'trackers': [],
+                'is_boss': False,
+                'estimated_reward': 100
+            }
+
+        data = self.current_level_data
+        obj_type = data.get('objective_type', 'kill_enemies')
+        is_boss = bool(data.get('boss_required', False))
+        killed = getattr(self.game, 'enemies_killed_this_level', 0)
+        req = data.get('enemy_count', 20)
+
+        trackers = []
+        progress = 0.0
+        description = "Complete the objectives"
+
+        if is_boss:
+            description = "Defeat the Boss"
+            progress = self.get_boss_approach()
+            trackers.append({
+                'name': 'Hostiles Eliminated',
+                'current': killed,
+                'target': req,
+                'percent': min(1.0, killed / max(1, req))
+            })
+            trackers.append({
+                'name': 'Boss Gauge',
+                'current': int(progress * 100),
+                'target': 100,
+                'percent': progress,
+                'unit': '%'
+            })
+        elif obj_type == 'kill_enemies':
+            description = f"Eliminate {req} hostiles"
+            progress = min(1.0, killed / max(1, req))
+            trackers.append({
+                'name': 'Enemies Destroyed',
+                'current': killed,
+                'target': req,
+                'percent': progress
+            })
+        elif obj_type == 'survive_time':
+            t = int(getattr(self.game, 'survival_time', 0))
+            target_t = 60
+            progress = min(1.0, t / target_t)
+            description = f"Survive for {target_t}s"
+            trackers.append({
+                'name': 'Time Survived',
+                'current': t,
+                'target': target_t,
+                'percent': progress,
+                'unit': 's'
+            })
+        elif obj_type == 'collect_powerups':
+            p = getattr(self.game, 'powerups_collected_this_level', 0)
+            target_p = 5
+            progress = min(1.0, p / target_p)
+            description = f"Collect {target_p} power-ups"
+            trackers.append({
+                'name': 'Power-ups Collected',
+                'current': p,
+                'target': target_p,
+                'percent': progress
+            })
+        elif obj_type == 'no_damage':
+            dmg = getattr(self.game, 'damage_taken_this_level', 0)
+            progress = 1.0 if dmg == 0 else 0.0
+            description = "Complete with zero damage"
+            trackers.append({
+                'name': 'Damage Taken',
+                'current': dmg,
+                'target': 0,
+                'percent': progress,
+                'invert': True  # lower is better
+            })
+
+        # Add common trackers
+        trackers.append({
+            'name': 'Style Rank',
+            'current': getattr(self.game, 'style_rank', 'D'),
+            'target': 'S',
+            'percent': {'S':1.0,'A':0.8,'B':0.6,'C':0.4,'D':0.2}.get(getattr(self.game, 'style_rank', 'D'), 0.2)
+        })
+
+        return {
+            'title': f"Level {self.current_level} - {data.get('theme', 'Space').title()}",
+            'description': description,
+            'progress': progress,
+            'trackers': trackers,
+            'is_boss': is_boss,
+            'objective_type': obj_type,
+            'estimated_reward': self.get_level_reward()
+        }
 
 class Camera:
     def __init__(self, game):

@@ -40,6 +40,9 @@ class MenuState(GameState):
 
     def handle_event(self, event):
         if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_F11:
+                self.game.toggle_fullscreen()
+                return
             if event.key == pygame.K_w or event.key == pygame.K_UP:
                 self.game.selected_option = (self.game.selected_option - 1) % len(self.game.menu_options)
             elif event.key == pygame.K_s or event.key == pygame.K_DOWN:
@@ -544,6 +547,11 @@ class PlayingState(GameState):
                     self.game.resume_music()
             elif event.key == pygame.K_g:
                 self.game.god_mode = not self.game.god_mode
+            elif event.key == pygame.K_F11:
+                self.game.toggle_fullscreen()
+            elif event.key == pygame.K_TAB:
+                # Expand / collapse full mission objectives panel
+                self.game.show_mission_panel = not getattr(self.game, 'show_mission_panel', False)
             elif event.key == pygame.K_ESCAPE:
                 self.game.paused = not self.game.paused
                 if self.game.paused:
@@ -1414,22 +1422,64 @@ class VictoryState(GameState):
 
 # BossIncomingState
 class BossIncomingState(GameState):
+    """Polished boss warning sequence (no more ugly full-screen flashing).
+    Buildup like classic shmups: warning, music, particles, countdown, dramatic spawn.
+    """
     def enter(self):
         self.timer = 0
+        self.game._boss_incoming_timer = 0
         self.game.play_music("boss_music")
+        # Stop normal spawns during warning for drama
+        if hasattr(self.game, 'session') and self.game.session:
+            self.game.session.boss_spawned = True  # temporarily treat as boss phase for spawning
+        # Initial warning burst
+        try:
+            for _ in range(25):
+                import random
+                px = random.randint(50, SCREEN_WIDTH-50)
+                py = random.randint(50, SCREEN_HEIGHT-50)
+                p = Particle(px, py, RED, 'explosion', 4)
+                self.game.particles.append(p)
+        except Exception:
+            pass
 
     def update(self):
         self.timer += 1
-        if self.timer > 180:  # 3 seconds
-            # Spawn boss
+        self.game._boss_incoming_timer = self.timer  # for renderer dramatic elements
+        # Spawn warning particles throughout (red danger / alarm)
+        if self.timer % 6 == 0:
+            try:
+                import random
+                for _ in range(3):
+                    px = random.randint(20, SCREEN_WIDTH-20)
+                    py = random.randint(20, SCREEN_HEIGHT-20)
+                    p = Particle(px, py, (255, 80, 80), 'spark', 2)
+                    p.vel_y = random.uniform(-1, 1)
+                    self.game.particles.append(p)
+            except Exception:
+                pass
+
+        if self.timer > 180:  # ~3 seconds buildup
+            # Spawn boss with impressive entrance
             boss = Boss(self.game)
             self.game.all_sprites.add(boss)
             self.game.enemies.add(boss)
             self.game.boss_spawned = True
-            # Boss spawn smoke animation
-            for _ in range(30):
-                p = Particle(boss.rect.centerx, boss.rect.centery, PURPLE, 'smoke')
-                self.game.particles.append(p)
+            # Big entrance FX
+            try:
+                for _ in range(60):
+                    p = Particle(boss.rect.centerx, boss.rect.centery, PURPLE, 'explosion')
+                    self.game.particles.append(p)
+                for _ in range(15):
+                    p = Particle(boss.rect.centerx, boss.rect.centery, (255, 200, 100), 'ring')
+                    p.max_size = 55
+                    self.game.particles.append(p)
+            except Exception:
+                pass
+            # Restore normal spawning logic
+            if hasattr(self.game, 'session') and self.game.session:
+                self.game.session.boss_spawned = True
+            self.game._boss_incoming_timer = 0
             self.game.change_state(PlayingState(self.game))
 
     def draw(self):

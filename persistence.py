@@ -25,6 +25,7 @@ DEFAULT_SETTINGS = {
     "colorblind_mode": None,  # None, "desat", etc.
     "enable_experimental_mp": False,
     "mouse_aim": False,
+    "fullscreen": False,  # v3 polish: default windowed (F11 to toggle); no forced fullscreen override
 }
 
 

@@ -147,6 +147,13 @@ class PowerUp(pygame.sprite.Sprite):
         
         assets = getattr(self.game, 'assets', None) or get_asset_manager()
         self.image = assets.load_image(f'powerup_{type}.png', (51, 51), draw_powerup)
+        # Use the single high-quality upgraded powerup orb (v4 generated) for all types - it looks pro + bloom/particles sell the 'animation'
+        try:
+            g = assets.load_image('powerup_v4.png', (51, 51))
+            if g and g.get_width() > 20:
+                self.image = g
+        except:
+            pass
         
         # Apply theme-based color modification if using fallback
         if not self._image_loaded_successfully():
