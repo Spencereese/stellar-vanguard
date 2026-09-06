@@ -1356,20 +1356,62 @@ class Renderer:
                     tab_text = self.render_shadowed_text(category, text_color, game.tiny_font)
                     surface.blit(tab_text, (tab_x + tab_width//2 - tab_text.get_width()//2, tab_y + 8))
 
-                # Modern touch: show featured offers (3 random this visit) — now with rarity badges
+                # Modern touch: purchasable featured deals row (discounted, selectable)
                 if hasattr(game.state, 'featured_items'):
-                    feat_y = tab_y + tab_height + 5
-                    ft = self.render_shadowed_text("FEATURED THIS VISIT (random):", (200, 220, 100), game.tiny_font)
+                    feat_y = tab_y + tab_height + 6
+                    focus = getattr(game.state, 'shop_focus', 'grid')
+                    hdr_col = (255, 220, 80) if focus == 'featured' else (200, 220, 100)
+                    ft = self.render_shadowed_text("FEATURED DEALS (UP to focus / ENTER buy / R reroll 150):", hdr_col, game.tiny_font)
                     surface.blit(ft, (start_x, feat_y))
-                    parts = []
-                    for f in getattr(game.state, 'featured_items', [])[:3]:
-                        r = f.get('rarity', 'common')
-                        badge = f.get('rarity_note', '') or ('['+r[:3].upper()+']' if r!='common' else '')
-                        nm = str(f.get('name',''))[:12]
-                        parts.append(f"{nm}{badge}".strip())
-                    fn = "  •  ".join(parts)
-                    fnt = self.render_shadowed_text(fn, WHITE, game.tiny_font)
-                    surface.blit(fnt, (start_x, feat_y + 16))
+                    feats = list(getattr(game.state, 'featured_items', []) or [])[:3]
+                    sel_f = int(getattr(game.state, 'selected_featured', 0) or 0)
+                    f_w, f_h = 200, 52
+                    gap = 20
+                    row_w = 3 * f_w + 2 * gap
+                    fx0 = (vw - row_w) // 2
+                    for fi, fitem in enumerate(feats):
+                        fx = fx0 + fi * (f_w + gap)
+                        fy = feat_y + 18
+                        sold = bool(fitem.get('sold'))
+                        pct = int(fitem.get('deal_percent', 0) or 0)
+                        cost = fitem.get('cost', 0)
+                        orig = fitem.get('original_cost', cost)
+                        rarity = fitem.get('rarity', 'common')
+                        selected = (focus == 'featured' and fi == sel_f)
+                        if sold:
+                            card_c = (40, 40, 48, 210)
+                            bord = (90, 90, 100)
+                        elif selected:
+                            pulse = math.sin(pygame.time.get_ticks() * 0.008) * 0.3 + 0.7
+                            card_c = (int(90 * pulse), int(70 * pulse), int(20 * pulse), 245)
+                            bord = GOLD
+                        else:
+                            card_c = (70, 55, 25, 230)
+                            bord = (200, 170, 60)
+                        cs = pygame.Surface((f_w, f_h), pygame.SRCALPHA)
+                        cs.fill(card_c)
+                        surface.blit(cs, (fx, fy))
+                        if selected and not sold:
+                            glow = pygame.Surface((f_w + 8, f_h + 8), pygame.SRCALPHA)
+                            pygame.draw.rect(glow, (255, 215, 0, 100), (0, 0, f_w + 8, f_h + 8), border_radius=10)
+                            surface.blit(glow, (fx - 4, fy - 4))
+                        pygame.draw.rect(surface, bord, (fx, fy, f_w, f_h), 2, border_radius=8)
+                        nm = str(fitem.get('name', ''))[:16]
+                        rnote = fitem.get('rarity_note', '') or (f"[{rarity[:3].upper()}]" if rarity != 'common' else '')
+                        title = self.render_shadowed_text(f"{nm} {rnote}".strip(), WHITE if not sold else (140, 140, 140), game.tiny_font)
+                        surface.blit(title, (fx + 8, fy + 4))
+                        if sold:
+                            st = self.render_shadowed_text("SOLD", (180, 180, 190), game.tiny_font)
+                            surface.blit(st, (fx + 8, fy + 22))
+                        else:
+                            deal = self.render_shadowed_text(f"{pct}% OFF", GOLD, game.tiny_font)
+                            surface.blit(deal, (fx + 8, fy + 20))
+                            price = self.render_shadowed_text(f"{orig}->{cost}", (220, 200, 120) if game.coins >= cost else (200, 100, 100), game.tiny_font)
+                            surface.blit(price, (fx + 8, fy + 34))
+                            if fitem.get('synergy_tag'):
+                                syn = self.render_shadowed_text(str(fitem['synergy_tag'])[:14], (255, 215, 80), game.tiny_font)
+                                surface.blit(syn, (fx + f_w - syn.get_width() - 6, fy + 34))
+
 
             current_state = game.state
             if hasattr(current_state, 'category_items'):
@@ -1388,7 +1430,7 @@ class Renderer:
             if getattr(game.state, 'is_post_boss', False):
                 start_y = int(145 * (vh / float(self.base_height)))  # room for celebratory title + sub
             if not (hasattr(game.state, 'is_post_boss') and game.state.is_post_boss) and hasattr(game.state, 'featured_items'):
-                start_y += 40  # space for featured line
+                start_y += 78  # space for featured deals cards
 
             for i, item in enumerate(shop_items):
                 row = i // items_per_row
@@ -1421,7 +1463,8 @@ class Renderer:
                         card_color = (35, 38, 48, 220)  # skip is calmer/neutral
                         border_color = (120, 120, 140)
                 else:
-                    if i == game.selected_item:
+                    grid_focused = getattr(game.state, 'shop_focus', 'grid') != 'featured'
+                    if grid_focused and i == game.selected_item:
                         pulse = math.sin(pygame.time.get_ticks() * 0.008) * 0.3 + 0.7
                         card_color = (int(70 * pulse), int(100 * pulse), int(200 * pulse), 240)
                         border_color = (int(150 * pulse), int(200 * pulse), int(255 * pulse))
@@ -1457,8 +1500,9 @@ class Renderer:
                     surface.blit(rglow, (x - 3, y - 3))
                 pygame.draw.rect(surface, border_color, (x, y, item_width, item_height), 2, border_radius=8)
 
-                # Selected glow (tinted by rarity for post)
-                if i == game.selected_item:
+                # Selected glow (tinted by rarity for post); skip when featured row focused
+                _grid_focus = getattr(game.state, 'shop_focus', 'grid') != 'featured' or getattr(game.state, 'is_post_boss', False)
+                if _grid_focus and i == game.selected_item:
                     sel_col = r_border if (is_post and rarity != 'common') else (150, 200, 255)
                     glow_surf = pygame.Surface((item_width + 8, item_height + 8), pygame.SRCALPHA)
                     pygame.draw.rect(glow_surf, (*sel_col[:3], 110), (0, 0, item_width + 8, item_height + 8), border_radius=10)
@@ -1560,7 +1604,7 @@ class Renderer:
                 nav = "WASD/Arrows: Pick  •  ENTER/A: Claim  •  R: paid reroll (50)  •  SKIP/ESC: +coins & continue"
                 nav_text = self.render_shadowed_text(nav, GOLD, game.tiny_font)
         else:
-            nav_text = self.render_shadowed_text("Q/E or LB/RB: Switch categories • ↑↓←→ or WASD: Navigate • R: Reroll featured (150💰) • ENTER or A: Purchase • ESC: Back", WHITE, game.tiny_font)
+            nav_text = self.render_shadowed_text("Q/E: Categories  |  WASD: Navigate (UP to Featured Deals)  |  R: Reroll deals (150)  |  ENTER/A: Buy  |  ESC: Back", WHITE, game.tiny_font)
         self.game.screen.blit(nav_text, (SCREEN_WIDTH//2 - nav_text.get_width()//2, SCREEN_HEIGHT - 60))
 
         pygame.display.flip()

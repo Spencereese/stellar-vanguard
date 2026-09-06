@@ -1191,8 +1191,10 @@ class ShopState(GameState):
             self.current_category = 0  # Index into categories list
             self.category_items = []  # Filtered items for current category
             self._update_category_items()
-            # Modern shop: generate featured 3 random on visit (roguelite style)
-            self.featured_items = self._generate_post_boss_choices(3)
+            # Modern shop: purchasable featured deals row (discounted, no skip)
+            self.featured_items = self._generate_featured_deals(3)
+            self.shop_focus = "grid"  # "featured" | "grid"
+            self.selected_featured = 0
 
     def _update_category_items(self):
         """Update the list of items for the current category"""
@@ -1290,6 +1292,82 @@ class ShopState(GameState):
                 item["display_desc"] += " [EPIC+]"
         return item
 
+    def _generate_featured_deals(self, n=3):
+        """Main-shop featured row: n discounted purchasable deals (no skip).
+        Diversity-biased picks with 20/30/50% OFF, rarity/synergy tags.
+        """
+        pool = [
+            item for item in self.game.shop_items
+            if item.get("category") in ("upgrades", "weapons", "special", "consumables")
+            and not item.get("skip")
+            and "original_cost" not in item
+            and not item.get("featured_deal")
+        ]
+        if len(pool) < n:
+            pool = [
+                it for it in self.game.shop_items
+                if not it.get("skip") and "original_cost" not in it and not it.get("featured_deal")
+            ]
+        buckets = {"weapons": [], "upgrades": [], "special": [], "consumables": []}
+        for it in pool:
+            cat = it.get("category", "special")
+            if cat in buckets:
+                buckets[cat].append(it)
+            else:
+                buckets["special"].append(it)
+
+        def _make_deal(cand):
+            c = dict(cand)
+            pct = random.choice([20, 30, 50])
+            if c.get("dynamic_cost") and "cost_key" in c:
+                base = self.game.upgrades.get_upgrade_cost(c["cost_key"])
+                c["original_cost"] = base
+                c["cost"] = max(25, int(base * (1 - pct / 100)))
+                c["dynamic_cost"] = False  # lock deal price for this visit
+            elif "cost" in c:
+                orig = int(c["cost"])
+                c["original_cost"] = orig
+                c["cost"] = max(25, int(orig * (1 - pct / 100)))
+            else:
+                c["original_cost"] = c.get("cost", 50)
+                c["cost"] = max(25, int(c["original_cost"] * (1 - pct / 100)))
+            c["deal_percent"] = pct
+            c["featured_deal"] = True
+            c["sold"] = False
+            c.pop("post_boss", None)
+            c.pop("post_boss_discount", None)
+            loadout = getattr(getattr(self.game, "session", None), "current_loadout", None)
+            mods = getattr(getattr(self.game, "session", None), "active_modifiers", None)
+            weapon = getattr(getattr(self.game, "player", None), "weapon", "")
+            rank = getattr(self.game, "style_rank", "D")
+            return self._assign_rarity_and_synergy(c, rank, weapon, loadout, mods)
+
+        chosen = []
+        seen = set()
+        order = ["weapons", "upgrades", "special", "consumables"]
+        for bname in order:
+            if len(chosen) >= n:
+                break
+            cands = list(buckets.get(bname, []))
+            random.shuffle(cands)
+            for cand in cands:
+                key = cand.get("cost_key") or cand.get("name")
+                if key in seen:
+                    continue
+                seen.add(key)
+                chosen.append(_make_deal(cand))
+                break
+        random.shuffle(pool)
+        for item in pool:
+            if len(chosen) >= n:
+                break
+            key = item.get("cost_key") or item.get("name")
+            if key in seen:
+                continue
+            seen.add(key)
+            chosen.append(_make_deal(item))
+        return chosen
+
     def _generate_post_boss_choices(self, n=3):
         """Best-in-class post-boss: 3 curated (Hades 3-boon style) + explicit skip.
         - Rarity tiers (weighted by rank)
@@ -1374,6 +1452,137 @@ class ShopState(GameState):
         chosen.append(skip_item)
         return chosen
 
+    def _buy_shop_item(self, item, from_featured=False):
+        """Shared purchase for main-grid / featured deals / post-boss claim."""
+        if from_featured and item.get("sold"):
+            self.purchase_message = "Deal already purchased!"
+            self.purchase_message_time = pygame.time.get_ticks()
+            return False
+        if getattr(self, "is_post_boss", False) and getattr(self, "has_claimed_reward", False) and not item.get("skip"):
+            self.purchase_message = "Reward claimed — ESC to continue to next level."
+            self.purchase_message_time = pygame.time.get_ticks()
+            return False
+        if item.get("dynamic_cost", False):
+            cost = self.game.upgrades.get_upgrade_cost(item["cost_key"])
+        else:
+            cost = item.get("cost", 0)
+        if self.game.coins < cost:
+            self.purchase_message = "Not enough coins!"
+            self.purchase_message_time = pygame.time.get_ticks()
+            return False
+        self.game.coins -= cost
+        item["effect"]()
+        if item.get("skip"):
+            self.purchase_message = f"Skipped — +{self.skip_bonus} coins!"
+            self.purchase_message_time = pygame.time.get_ticks()
+            if getattr(self, "is_survival_milestone", False) or (
+                getattr(self, "is_post_boss", False) and getattr(self.game, "survival", False)
+            ):
+                self.game.preserve_run = True
+            self.game.change_state(PlayingState(self.game))
+            return True
+        if from_featured:
+            item["sold"] = True
+            pct = item.get("deal_percent", 0)
+            self.purchase_message = f"Deal! Purchased {item['name']} ({pct}% OFF)!"
+            self.purchase_message_time = pygame.time.get_ticks()
+            return True
+        self.purchase_message = f"Purchased {item['name']}!"
+        self.purchase_message_time = pygame.time.get_ticks()
+        if getattr(self, "is_post_boss", False):
+            self.has_claimed_reward = True
+            self.claimed_item_name = item.get("name")
+            self.rerolls_remaining = 0
+            name = item.get("name")
+            self.category_items = [it for it in self.category_items if it.get("name") == name or it.get("skip")]
+            if self.game.selected_item >= len(self.category_items):
+                self.game.selected_item = max(0, len(self.category_items) - 1)
+            if item.get("rarity") in ("epic", "legendary") and item.get("dynamic_cost"):
+                try:
+                    item["effect"]()
+                    self.purchase_message = f"Purchased {item['name']}! [EPIC BONUS]"
+                except Exception:
+                    pass
+        return True
+
+    def _nav_featured_or_grid_up(self):
+        if getattr(self, "is_post_boss", False):
+            items_per_row = 3
+            current_row = self.game.selected_item // items_per_row
+            current_col = self.game.selected_item % items_per_row
+            new_row = max(0, current_row - 1)
+            new_index = new_row * items_per_row + current_col
+            if new_index < len(self.category_items):
+                self.game.selected_item = new_index
+            return
+        if getattr(self, "shop_focus", "grid") == "featured":
+            return
+        items_per_row = 3
+        current_row = self.game.selected_item // items_per_row
+        current_col = self.game.selected_item % items_per_row
+        if current_row == 0 and getattr(self, "featured_items", None):
+            self.shop_focus = "featured"
+            self.selected_featured = min(current_col, max(0, len(self.featured_items) - 1))
+            return
+        new_row = max(0, current_row - 1)
+        new_index = new_row * items_per_row + current_col
+        if new_index < len(self.category_items):
+            self.game.selected_item = new_index
+
+    def _nav_featured_or_grid_down(self):
+        if getattr(self, "is_post_boss", False):
+            items_per_row = 3
+            current_row = self.game.selected_item // items_per_row
+            current_col = self.game.selected_item % items_per_row
+            max_row = (len(self.category_items) - 1) // items_per_row
+            new_row = min(max_row, current_row + 1)
+            new_index = new_row * items_per_row + current_col
+            if new_index < len(self.category_items):
+                self.game.selected_item = new_index
+            return
+        if getattr(self, "shop_focus", "grid") == "featured":
+            self.shop_focus = "grid"
+            return
+        items_per_row = 3
+        current_row = self.game.selected_item // items_per_row
+        current_col = self.game.selected_item % items_per_row
+        max_row = (len(self.category_items) - 1) // items_per_row
+        new_row = min(max_row, current_row + 1)
+        new_index = new_row * items_per_row + current_col
+        if new_index < len(self.category_items):
+            self.game.selected_item = new_index
+
+    def _nav_left(self):
+        if not getattr(self, "is_post_boss", False) and getattr(self, "shop_focus", "grid") == "featured":
+            n = len(getattr(self, "featured_items", []) or [])
+            if n:
+                self.selected_featured = (self.selected_featured - 1) % n
+            return
+        if self.category_items:
+            self.game.selected_item = (self.game.selected_item - 1) % len(self.category_items)
+
+    def _nav_right(self):
+        if not getattr(self, "is_post_boss", False) and getattr(self, "shop_focus", "grid") == "featured":
+            n = len(getattr(self, "featured_items", []) or [])
+            if n:
+                self.selected_featured = (self.selected_featured + 1) % n
+            return
+        if self.category_items:
+            self.game.selected_item = (self.game.selected_item + 1) % len(self.category_items)
+
+    def _try_purchase_selection(self):
+        if not getattr(self, "is_post_boss", False) and getattr(self, "shop_focus", "grid") == "featured":
+            feats = getattr(self, "featured_items", []) or []
+            if not feats:
+                return
+            idx = max(0, min(getattr(self, "selected_featured", 0), len(feats) - 1))
+            self._buy_shop_item(feats[idx], from_featured=True)
+            return
+        if not self.category_items:
+            return
+        item = self.category_items[self.game.selected_item]
+        self._buy_shop_item(item, from_featured=False)
+
     def handle_event(self, event):
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
@@ -1422,143 +1631,53 @@ class ShopState(GameState):
                                 self.purchase_message = "Rerolled (paid 50)"
                             self.purchase_message_time = pygame.time.get_ticks()
                 else:
-                    # Main shop featured reroll (paid)
+                    # Main shop featured deals reroll (paid)
                     reroll_cost = 150
                     if self.game.coins >= reroll_cost:
                         self.game.coins -= reroll_cost
-                        self.featured_items = self._generate_post_boss_choices(3)
-                        self.purchase_message = "Featured offers rerolled!"
+                        self.featured_items = self._generate_featured_deals(3)
+                        self.selected_featured = 0
+                        self.shop_focus = "featured"
+                        self.purchase_message = "Featured deals rerolled!"
                         self.purchase_message_time = pygame.time.get_ticks()
                     else:
                         self.purchase_message = "Not enough for reroll!"
                         self.purchase_message_time = pygame.time.get_ticks()
             elif event.key == pygame.K_w or event.key == pygame.K_UP:
-                # Move up in grid (3 items per row)
-                items_per_row = 3
-                current_row = self.game.selected_item // items_per_row
-                current_col = self.game.selected_item % items_per_row
-                new_row = max(0, current_row - 1)
-                new_index = new_row * items_per_row + current_col
-                if new_index < len(self.category_items):
-                    self.game.selected_item = new_index
+                self._nav_featured_or_grid_up()
             elif event.key == pygame.K_s or event.key == pygame.K_DOWN:
-                # Move down in grid (3 items per row)
-                items_per_row = 3
-                current_row = self.game.selected_item // items_per_row
-                current_col = self.game.selected_item % items_per_row
-                max_row = (len(self.category_items) - 1) // items_per_row
-                new_row = min(max_row, current_row + 1)
-                new_index = new_row * items_per_row + current_col
-                if new_index < len(self.category_items):
-                    self.game.selected_item = new_index
+                self._nav_featured_or_grid_down()
             elif event.key == pygame.K_a or event.key == pygame.K_LEFT:
-                # Move left in grid
-                self.game.selected_item = (self.game.selected_item - 1) % len(self.category_items)
+                self._nav_left()
             elif event.key == pygame.K_d or event.key == pygame.K_RIGHT:
-                # Move right in grid
-                self.game.selected_item = (self.game.selected_item + 1) % len(self.category_items)
+                self._nav_right()
             elif event.key == pygame.K_RETURN:
-                item = self.category_items[self.game.selected_item]
-                if getattr(self, 'is_post_boss', False) and getattr(self, 'has_claimed_reward', False) and not item.get('skip'):
-                    self.purchase_message = "Reward claimed — ESC to continue to next level."
-                    self.purchase_message_time = pygame.time.get_ticks()
-                else:
-                    if item.get('dynamic_cost', False):
-                        cost = self.game.upgrades.get_upgrade_cost(item['cost_key'])
-                    else:
-                        cost = item.get('cost', 0)
-                    if self.game.coins >= cost:
-                        self.game.coins -= cost
-                        # Apply effect (skip or upgrade)
-                        item["effect"]()
-                        if item.get('skip'):
-                            self.purchase_message = f"Skipped — +{self.skip_bonus} coins!"
-                            self.purchase_message_time = pygame.time.get_ticks()
-                            # Skip immediately proceeds (agency)
-                            if getattr(self, 'is_survival_milestone', False) or (getattr(self, 'is_post_boss', False) and getattr(self.game, 'survival', False)):
-                                self.game.preserve_run = True
-                            self.game.change_state(PlayingState(self.game))
-                            return
-                        self.purchase_message = f"Purchased {item['name']}!"
-                        self.purchase_message_time = pygame.time.get_ticks()
-                        if getattr(self, 'is_post_boss', False):
-                            # Post-boss: claim exactly one (Hades boon feel). Mark + lock further.
-                            self.has_claimed_reward = True
-                            self.claimed_item_name = item.get('name')
-                            self.rerolls_remaining = 0
-                            name = item.get('name')
-                            # Keep only the chosen + skip for clean "continue" UX
-                            self.category_items = [it for it in self.category_items if it.get('name') == name or it.get('skip')]
-                            if self.game.selected_item >= len(self.category_items):
-                                self.game.selected_item = max(0, len(self.category_items) - 1)
-                            # Epic/Legendary bonus: one extra apply for dynamic (visual juice, conservative)
-                            if item.get('rarity') in ('epic', 'legendary') and item.get('dynamic_cost'):
-                                try:
-                                    item["effect"]()
-                                    self.purchase_message = f"Purchased {item['name']}! [EPIC BONUS]"
-                                except Exception:
-                                    pass
-                    else:
-                        self.purchase_message = "Not enough coins!"
-                        self.purchase_message_time = pygame.time.get_ticks()
+                self._try_purchase_selection()
         elif event.type == pygame.JOYHATMOTION:
             if event.value[1] == 1:  # D-pad up
-                items_per_row = 3
-                current_row = self.game.selected_item // items_per_row
-                current_col = self.game.selected_item % items_per_row
-                new_row = max(0, current_row - 1)
-                new_index = new_row * items_per_row + current_col
-                if new_index < len(self.category_items):
-                    self.game.selected_item = new_index
+                self._nav_featured_or_grid_up()
             elif event.value[1] == -1:  # D-pad down
-                items_per_row = 3
-                current_row = self.game.selected_item // items_per_row
-                current_col = self.game.selected_item % items_per_row
-                max_row = (len(self.category_items) - 1) // items_per_row
-                new_row = min(max_row, current_row + 1)
-                new_index = new_row * items_per_row + current_col
-                if new_index < len(self.category_items):
-                    self.game.selected_item = new_index
+                self._nav_featured_or_grid_down()
             elif event.value[0] == -1:  # D-pad left
-                self.game.selected_item = (self.game.selected_item - 1) % len(self.category_items)
+                self._nav_left()
             elif event.value[0] == 1:  # D-pad right
-                self.game.selected_item = (self.game.selected_item + 1) % len(self.category_items)
-            elif not getattr(self, 'is_post_boss', False):
-                if event.value[0] == -1 and event.value[1] == 0:  # Left shoulder (LB)
-                    self.current_category = (self.current_category - 1) % len(self.categories)
-                    self._update_category_items()
-                elif event.value[0] == 1 and event.value[1] == 0:  # Right shoulder (RB)
-                    self.current_category = (self.current_category + 1) % len(self.categories)
-                    self._update_category_items()
+                self._nav_right()
         elif event.type == pygame.JOYAXISMOTION:
             current_time = pygame.time.get_ticks()
             if current_time - self.last_nav_time > 200:
                 if event.axis == 1:  # Left stick Y
                     if event.value < -0.5:  # Up
-                        items_per_row = 3
-                        current_row = self.game.selected_item // items_per_row
-                        current_col = self.game.selected_item % items_per_row
-                        new_row = max(0, current_row - 1)
-                        new_index = new_row * items_per_row + current_col
-                        if new_index < len(self.category_items):
-                            self.game.selected_item = new_index
+                        self._nav_featured_or_grid_up()
                         self.last_nav_time = current_time
                     elif event.value > 0.5:  # Down
-                        items_per_row = 3
-                        current_row = self.game.selected_item // items_per_row
-                        current_col = self.game.selected_item % items_per_row
-                        max_row = (len(self.category_items) - 1) // items_per_row
-                        new_row = min(max_row, current_row + 1)
-                        new_index = new_row * items_per_row + current_col
-                        if new_index < len(self.category_items):
-                            self.game.selected_item = new_index
+                        self._nav_featured_or_grid_down()
                         self.last_nav_time = current_time
                 elif event.axis == 0:  # Left stick X
                     if event.value < -0.5:  # Left
-                        self.game.selected_item = (self.game.selected_item - 1) % len(self.category_items)
+                        self._nav_left()
                         self.last_nav_time = current_time
                     elif event.value > 0.5:  # Right
-                        self.game.selected_item = (self.game.selected_item + 1) % len(self.category_items)
+                        self._nav_right()
                         self.last_nav_time = current_time
                 elif not getattr(self, 'is_post_boss', False):
                     if event.axis == 2:  # Left trigger (LT)
@@ -1573,44 +1692,7 @@ class ShopState(GameState):
                             self.last_nav_time = current_time
         elif event.type == pygame.JOYBUTTONDOWN:
             if event.button == 0:  # A button
-                item = self.category_items[self.game.selected_item]
-                if getattr(self, 'is_post_boss', False) and getattr(self, 'has_claimed_reward', False) and not item.get('skip'):
-                    self.purchase_message = "Reward claimed — Start/ESC to continue to next level."
-                    self.purchase_message_time = pygame.time.get_ticks()
-                else:
-                    if item.get('dynamic_cost', False):
-                        cost = self.game.upgrades.get_upgrade_cost(item['cost_key'])
-                    else:
-                        cost = item.get('cost', 0)
-                    if self.game.coins >= cost:
-                        self.game.coins -= cost
-                        item["effect"]()
-                        if item.get('skip'):
-                            self.purchase_message = f"Skipped — +{self.skip_bonus} coins!"
-                            self.purchase_message_time = pygame.time.get_ticks()
-                            if getattr(self, 'is_survival_milestone', False) or (getattr(self, 'is_post_boss', False) and getattr(self.game, 'survival', False)):
-                                self.game.preserve_run = True
-                            self.game.change_state(PlayingState(self.game))
-                            return
-                        self.purchase_message = f"Purchased {item['name']}!"
-                        self.purchase_message_time = pygame.time.get_ticks()
-                        if getattr(self, 'is_post_boss', False):
-                            self.has_claimed_reward = True
-                            self.claimed_item_name = item.get('name')
-                            self.rerolls_remaining = 0
-                            name = item.get('name')
-                            self.category_items = [it for it in self.category_items if it.get('name') == name or it.get('skip')]
-                            if self.game.selected_item >= len(self.category_items):
-                                self.game.selected_item = max(0, len(self.category_items) - 1)
-                            if item.get('rarity') in ('epic', 'legendary') and item.get('dynamic_cost'):
-                                try:
-                                    item["effect"]()
-                                    self.purchase_message = f"Purchased {item['name']}! [EPIC BONUS]"
-                                except Exception:
-                                    pass
-                    else:
-                        self.purchase_message = "Not enough coins!"
-                        self.purchase_message_time = pygame.time.get_ticks()
+                self._try_purchase_selection()
             elif event.button == 4:  # Left shoulder (LB)
                 if not getattr(self, 'is_post_boss', False):
                     self.current_category = (self.current_category - 1) % len(self.categories)

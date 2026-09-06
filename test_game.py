@@ -377,7 +377,7 @@ def test_sequel_features():
         print("OK R4 persistence survival bests coexist with highscores")
 
         from config import MODE_SURVIVAL, VERSION
-        assert VERSION.startswith('3.8')
+        assert VERSION.startswith('3.')
         g_r4 = Game()
         g_r4.survival = True
         g_r4.game_mode = MODE_SURVIVAL
@@ -442,7 +442,7 @@ def test_sequel_features():
         print("OK R5 named highscore persistence + qualify gate")
 
         from config import VERSION as _ver_r5
-        assert _ver_r5.startswith('3.8')
+        assert _ver_r5.startswith('3.')
         g5 = Game()
         g5.spawn_damage_number(100, 200, 42, crit=False)
         g5.spawn_damage_number(110, 210, 99, crit=True)
@@ -508,12 +508,12 @@ def test_sequel_features():
             assert g6.window_width == 960
             assert pers6.load_settings().get("window_width") == 960
             from config import VERSION as _ver_r6
-            assert _ver_r6.startswith("3.8")
+            assert _ver_r6.startswith("3.")
             print("OK R6 window stretch toggle (960 default / 1280 optional)")
 
             # === R7: Survival difficulty ramp + mid-run milestones past 60s ===
             from config import MODE_SURVIVAL, VERSION as _ver_r7
-            assert _ver_r7.startswith("3.8")
+            assert _ver_r7.startswith("3.")
             g7 = Game()
             g7.survival = True
             g7.game_mode = MODE_SURVIVAL
@@ -567,7 +567,7 @@ def test_sequel_features():
             )
             from enemies import Boss
             from config import VERSION as _ver_r8
-            assert _ver_r8.startswith("3.8")
+            assert _ver_r8.startswith("3.")
             assert set(THEME_BOSS_VARIANT) == {t["id"] for t in WAVE_THEMES}
             assert "elite" in BOSS_VARIANT_META and "tank" in BOSS_VARIANT_META
             for tid, expected in THEME_BOSS_VARIANT.items():
@@ -598,7 +598,7 @@ def test_sequel_features():
 
             # === R9: Loadout polish + Settings joy-hat Window Size ===
             from config import VERSION as _ver_r9
-            assert _ver_r9.startswith("3.8")
+            assert _ver_r9.startswith("3.")
             from game_states import LoadoutSelectState
             from loadouts import ARCHETYPES
             from persistence import Persistence as PersR9, DEFAULT_SETTINGS as _ds_r9
@@ -646,7 +646,7 @@ def test_sequel_features():
 
             # === R10: Survival threat-tier elite events + composition bias ===
             from config import VERSION as _ver_r10, MODE_SURVIVAL as _ms_r10
-            assert _ver_r10.startswith("3.8")
+            assert _ver_r10.startswith("3.")
             g10 = Game()
             g10.game_mode = _ms_r10
             g10.survival = True
@@ -697,7 +697,7 @@ def test_sequel_features():
 
             # === R11: Campaign secondary objectives + no_damage recursion fix ===
             from config import VERSION as _ver_r11, MODE_CAMPAIGN as _mc_r11
-            assert _ver_r11.startswith("3.8")
+            assert _ver_r11.startswith("3.")
             from level_manager import LevelManager
             g11 = Game()
             g11.game_mode = _mc_r11
@@ -749,6 +749,62 @@ def test_sequel_features():
             assert md.get("secondary") is not None
             assert md["secondary"]["complete"] is True
             print("OK R11 Campaign secondary objectives + no_damage recursion fix")
+
+            # === R12: Shop featured purchasable deals row ===
+            from config import VERSION as _ver_r12
+            assert _ver_r12.startswith("3.9")
+            from game_states import ShopState as _ShopR12
+            import pygame as _pg_r12
+            g12 = Game()
+            g12.just_defeated_boss = False
+            g12.coins = 5000
+            g12.style_rank = "A"
+            if g12.session:
+                g12.session.current_loadout = type("L", (), {"archetype": "gunner"})()
+                g12.session.active_modifiers = []
+            s12 = _ShopR12(g12)
+            s12.enter()
+            assert not getattr(s12, "is_post_boss", False)
+            feats = getattr(s12, "featured_items", None)
+            assert isinstance(feats, list) and len(feats) == 3
+            for f in feats:
+                assert f.get("featured_deal") is True
+                assert "original_cost" in f and "cost" in f
+                assert f.get("deal_percent") in (20, 30, 50)
+                assert f.get("sold") is False
+                assert not f.get("skip")
+                assert f["cost"] <= f["original_cost"]
+            assert getattr(s12, "shop_focus", None) == "grid"
+            g12.selected_item = 0
+            s12.handle_event(type("E", (), {"type": _pg_r12.KEYDOWN, "key": _pg_r12.K_UP})())
+            assert s12.shop_focus == "featured"
+            before = s12.selected_featured
+            s12.handle_event(type("E", (), {"type": _pg_r12.KEYDOWN, "key": _pg_r12.K_RIGHT})())
+            assert s12.selected_featured == (before + 1) % 3
+            s12.handle_event(type("E", (), {"type": _pg_r12.KEYDOWN, "key": _pg_r12.K_DOWN})())
+            assert s12.shop_focus == "grid"
+            s12.shop_focus = "featured"
+            s12.selected_featured = 0
+            deal = s12.featured_items[0]
+            cost_before = deal["cost"]
+            coins_before = g12.coins
+            s12.handle_event(type("E", (), {"type": _pg_r12.KEYDOWN, "key": _pg_r12.K_RETURN})())
+            assert deal.get("sold") is True
+            assert g12.coins == coins_before - cost_before
+            assert "Deal!" in (s12.purchase_message or "")
+            coins2 = g12.coins
+            s12.handle_event(type("E", (), {"type": _pg_r12.KEYDOWN, "key": _pg_r12.K_RETURN})())
+            assert g12.coins == coins2
+            assert "already" in (s12.purchase_message or "").lower()
+            g12.coins = 1000
+            s12.handle_event(type("E", (), {"type": _pg_r12.KEYDOWN, "key": _pg_r12.K_r})())
+            assert g12.coins == 850
+            assert s12.shop_focus == "featured"
+            assert len(s12.featured_items) == 3
+            assert all(not f.get("sold") for f in s12.featured_items)
+            assert hasattr(s12, "_generate_featured_deals")
+            assert hasattr(s12, "_buy_shop_item")
+            print("OK R12 Shop featured purchasable deals (nav/buy/sold/reroll)")
         finally:
             _pers_mod_r6._default_persistence = _prev_pers
         # loadout select state (R9 polish)
