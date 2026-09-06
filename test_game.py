@@ -377,7 +377,7 @@ def test_sequel_features():
         print("OK R4 persistence survival bests coexist with highscores")
 
         from config import MODE_SURVIVAL, VERSION
-        assert VERSION.startswith('3.5')
+        assert VERSION.startswith('3.6')
         g_r4 = Game()
         g_r4.survival = True
         g_r4.game_mode = MODE_SURVIVAL
@@ -442,7 +442,7 @@ def test_sequel_features():
         print("OK R5 named highscore persistence + qualify gate")
 
         from config import VERSION as _ver_r5
-        assert _ver_r5.startswith('3.5')
+        assert _ver_r5.startswith('3.6')
         g5 = Game()
         g5.spawn_damage_number(100, 200, 42, crit=False)
         g5.spawn_damage_number(110, 210, 99, crit=True)
@@ -508,12 +508,12 @@ def test_sequel_features():
             assert g6.window_width == 960
             assert pers6.load_settings().get("window_width") == 960
             from config import VERSION as _ver_r6
-            assert _ver_r6.startswith("3.5")
+            assert _ver_r6.startswith("3.6")
             print("OK R6 window stretch toggle (960 default / 1280 optional)")
 
             # === R7: Survival difficulty ramp + mid-run milestones past 60s ===
             from config import MODE_SURVIVAL, VERSION as _ver_r7
-            assert _ver_r7.startswith("3.5")
+            assert _ver_r7.startswith("3.6")
             g7 = Game()
             g7.survival = True
             g7.game_mode = MODE_SURVIVAL
@@ -567,7 +567,7 @@ def test_sequel_features():
             )
             from enemies import Boss
             from config import VERSION as _ver_r8
-            assert _ver_r8.startswith("3.5")
+            assert _ver_r8.startswith("3.6")
             assert set(THEME_BOSS_VARIANT) == {t["id"] for t in WAVE_THEMES}
             assert "elite" in BOSS_VARIANT_META and "tank" in BOSS_VARIANT_META
             for tid, expected in THEME_BOSS_VARIANT.items():
@@ -595,13 +595,62 @@ def test_sequel_features():
             b_base = Boss(g8, variant="elite")
             assert b_press.max_health >= b_base.max_health
             print("OK R8 Survival boss variety from existing enemy types")
+
+            # === R9: Loadout polish + Settings joy-hat Window Size ===
+            from config import VERSION as _ver_r9
+            assert _ver_r9.startswith("3.6")
+            from game_states import LoadoutSelectState
+            from loadouts import ARCHETYPES
+            from persistence import Persistence as PersR9, DEFAULT_SETTINGS as _ds_r9
+            import persistence as _pers_mod_r9
+            import tempfile as _tf_r9
+            assert "last_archetype" in _ds_r9
+            td9 = _tf_r9.mkdtemp(prefix="sv_r9_")
+            pers9 = PersR9(base_dir=td9)
+            pers9.save_settings({"last_archetype": "gunner"})
+            _prev9 = getattr(_pers_mod_r9, "_default_persistence", None)
+            _pers_mod_r9._default_persistence = pers9
+            try:
+                g9 = Game()
+                los = LoadoutSelectState(g9)
+                los.enter()
+                assert los.archetypes == ["scout", "gunner", "tank"]
+                assert len(los.cards) == 3
+                assert los.selected == 1  # gunner from persisted last_archetype
+                for arch, card in zip(los.archetypes, los.cards):
+                    assert card["id"] == arch
+                    assert card["name"] == ARCHETYPES[arch]["name"]
+                    assert set(card["abilities"]) == set(ARCHETYPES[arch]["abilities"])
+                # Persist tank via apply path without needing full play loop:
+                # simulate the save settings portion
+                cur = pers9.load_settings()
+                cur["last_archetype"] = "tank"
+                pers9.save_settings(cur)
+                assert pers9.load_settings().get("last_archetype") == "tank"
+                los2 = LoadoutSelectState(g9)
+                los2.enter()
+                assert los2.selected == 2
+            finally:
+                _pers_mod_r9._default_persistence = _prev9
+            # Settings joy-hat L/R Window Size branch present (pad parity w/ keyboard)
+            src_gs = open("game_states.py", encoding="utf-8").read()
+            assert "Window Size (R9 pad parity)" in src_gs
+            # Live toggle still works
+            g9b = Game()
+            g9b.selected_setting = 3
+            w0 = g9b.window_width
+            g9b.toggle_window_size()
+            assert g9b.window_width in (960, 1280) and g9b.window_width != w0
+            print("OK R9 loadout polish (cards/pad/persist) + Settings joy-hat Window Size")
         finally:
             _pers_mod_r6._default_persistence = _prev_pers
-        # loadout select state stub
+        # loadout select state (R9 polish)
         from game_states import LoadoutSelectState
         los = LoadoutSelectState(g)
         assert len(los.options) == 3 and len(los.archetypes) == 3
-        print("✓ LoadoutSelectState scaffolding (PR5: options, keys, draw stub, apply)")
+        assert len(getattr(los, "cards", [])) == 3
+        assert all("abilities" in c for c in los.cards)
+        print("✓ LoadoutSelectState polish (R9: cards, abilities, pad-ready, last_archetype)")
 
         # full abilities + more keys (E/R/Q wired)
         # (code presence + previous activate test)
@@ -1012,7 +1061,7 @@ def test_headless_verifier_env_destr_abilities_keys():
 
 def main():
     """Run all tests"""
-    print("🛸 Space Shooter: Stellar Vanguard v3.5 - Test Suite")
+    print("🛸 Space Shooter: Stellar Vanguard v3.6 - Test Suite")
     print("=" * 40)
 
     tests = [
@@ -1035,7 +1084,7 @@ def main():
     print(f"Test Results: {passed}/{total} tests passed")
 
     if passed == total:
-        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.5 is ready to launch!")
+        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.6 is ready to launch!")
         return 0
     else:
         print("❌ Some tests failed. Please check the errors above.")

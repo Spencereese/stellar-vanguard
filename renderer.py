@@ -833,10 +833,11 @@ class Renderer:
 
         self._render_virtual_and_blit(_draw_menu_virtual, game)
 
-    def draw_loadout_select(self, game, options, selected):
-        """Proper loadout selection screen using virtual surface for clean rendering."""
-        def _draw_loadout_virtual(game, surface, options, selected):
+    def draw_loadout_select(self, game, options, selected, cards=None):
+        """R9 loadout polish: archetype list + detail card (stats/abilities)."""
+        def _draw_loadout_virtual(game, surface, options, selected, cards=None):
             vw, vh = surface.get_width(), surface.get_height()
+            scale_y = vh / float(self.base_height or 720)
             # Dark space gradient background
             for y in range(vh):
                 r = int(12 * (y / float(vh)))
@@ -852,30 +853,81 @@ class Renderer:
 
             # Title
             title = self.render_shadowed_text("SELECT LOADOUT", (255, 220, 100), game.font)
-            surface.blit(title, (vw//2 - title.get_width()//2, int(110 * (vh / float(self.base_height)))))
+            surface.blit(title, (vw//2 - title.get_width()//2, int(70 * scale_y)))
 
             sub = self.render_shadowed_text("Choose your ship archetype", (180, 190, 230), game.small_font)
-            surface.blit(sub, (vw//2 - sub.get_width()//2, int(155 * (vh / float(self.base_height)))))
+            surface.blit(sub, (vw//2 - sub.get_width()//2, int(115 * scale_y)))
 
-            start_y = int(220 * (vh / float(self.base_height)))
+            # Left column: archetype names
+            start_y = int(170 * scale_y)
+            row_h = int(48 * scale_y)
             for i, opt in enumerate(options):
+                label = opt
+                if cards and i < len(cards):
+                    label = cards[i].get("name", opt)
                 if i == selected:
                     col = (255, 255, 0)
-                    option_text = self.render_shadowed_text(f"> {opt} <", col, game.small_font)
-                    bg_width = option_text.get_width() + 50
+                    option_text = self.render_shadowed_text(f"> {i+1}. {label} <", col, game.small_font)
+                    bg_width = max(option_text.get_width() + 40, int(220 * (vw / float(self.base_width or 960))))
                     bg_height = option_text.get_height() + 12
-                    bg_x = vw//2 - bg_width//2
-                    bg_y = start_y + i * int(55 * (vh / float(self.base_height))) - 6
+                    bg_x = int(80 * (vw / float(self.base_width or 960)))
+                    bg_y = start_y + i * row_h - 6
                     pygame.draw.rect(surface, (20, 40, 20), (bg_x, bg_y, bg_width, bg_height), border_radius=6)
                     pygame.draw.rect(surface, (80, 200, 80), (bg_x, bg_y, bg_width, bg_height), 2, border_radius=6)
                 else:
-                    option_text = self.render_shadowed_text(opt, (230, 230, 230), game.small_font)
-                surface.blit(option_text, (vw//2 - option_text.get_width()//2, start_y + i * int(55 * (vh / float(self.base_height)))))
+                    option_text = self.render_shadowed_text(f"  {i+1}. {label}", (230, 230, 230), game.small_font)
+                    bg_x = int(80 * (vw / float(self.base_width or 960)))
+                surface.blit(option_text, (bg_x + 12 if i == selected else bg_x + 12, start_y + i * row_h))
 
-            hint = self.render_shadowed_text("↑↓ or 1/2/3  •  SPACE or ENTER to confirm  •  ESC back", (160, 170, 190), game.tiny_font)
-            surface.blit(hint, (vw//2 - hint.get_width()//2, vh - int(70 * (vh / float(self.base_height)))))
+            # Right detail card for selected
+            card = None
+            if cards and 0 <= selected < len(cards):
+                card = cards[selected]
+            if card:
+                cx = int(420 * (vw / float(self.base_width or 960)))
+                cy = int(170 * scale_y)
+                cw = int(480 * (vw / float(self.base_width or 960)))
+                ch = int(320 * scale_y)
+                pygame.draw.rect(surface, (18, 28, 48), (cx, cy, cw, ch), border_radius=10)
+                pygame.draw.rect(surface, (90, 160, 220), (cx, cy, cw, ch), 2, border_radius=10)
+                name_t = self.render_shadowed_text(card.get("name", "Loadout"), (255, 230, 140), game.font)
+                surface.blit(name_t, (cx + 20, cy + 16))
+                desc = card.get("desc", "")
+                # wrap desc roughly
+                words = desc.split()
+                lines, cur = [], ""
+                for w in words:
+                    trial = (cur + " " + w).strip()
+                    if len(trial) > 42:
+                        if cur:
+                            lines.append(cur)
+                        cur = w
+                    else:
+                        cur = trial
+                if cur:
+                    lines.append(cur)
+                for li, line in enumerate(lines[:3]):
+                    dt = self.render_shadowed_text(line, (200, 210, 230), game.small_font)
+                    surface.blit(dt, (cx + 20, cy + 70 + li * int(28 * scale_y)))
+                stats = card.get("stats") or []
+                sy0 = cy + 70 + max(len(lines), 1) * int(28 * scale_y) + int(16 * scale_y)
+                st = self.render_shadowed_text("Stats", (140, 200, 255), game.small_font)
+                surface.blit(st, (cx + 20, sy0))
+                for si, s in enumerate(stats[:6]):
+                    stxt = self.render_shadowed_text(f"• {s}", (220, 230, 240), game.tiny_font)
+                    surface.blit(stxt, (cx + 28, sy0 + int(28 * scale_y) + si * int(24 * scale_y)))
+                ab = ", ".join(a.upper() for a in (card.get("abilities") or []))
+                at = self.render_shadowed_text(f"Abilities: {ab}", (180, 255, 180), game.small_font)
+                surface.blit(at, (cx + 20, cy + ch - int(50 * scale_y)))
 
-        self._render_virtual_and_blit(_draw_loadout_virtual, game, options, selected)
+            hint = self.render_shadowed_text(
+                "↑↓ / W S / D-pad  •  1/2/3  •  ENTER/SPACE/A confirm  •  ESC/B back",
+                (160, 170, 190),
+                game.tiny_font,
+            )
+            surface.blit(hint, (vw//2 - hint.get_width()//2, vh - int(55 * scale_y)))
+
+        self._render_virtual_and_blit(_draw_loadout_virtual, game, options, selected, cards)
 
     def draw_options(self, game):
         def _draw_options_virtual(game, surface):

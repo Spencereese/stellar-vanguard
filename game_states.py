@@ -312,6 +312,8 @@ class SettingsState(GameState):
                 elif self.game.selected_setting == 2:  # SFX Volume
                     self.game.sfx_volume = max(0, self.game.sfx_volume - 0.1)
                     self.game.update_sound_volumes()
+                elif self.game.selected_setting == 3:  # Window Size (R9 pad parity)
+                    self.game.toggle_window_size()
             elif event.value[0] == 1:  # D-pad right
                 if self.game.selected_setting == 1:  # Music Volume
                     self.game.music_volume = min(1, self.game.music_volume + 0.1)
@@ -319,6 +321,8 @@ class SettingsState(GameState):
                 elif self.game.selected_setting == 2:  # SFX Volume
                     self.game.sfx_volume = min(1, self.game.sfx_volume + 0.1)
                     self.game.update_sound_volumes()
+                elif self.game.selected_setting == 3:  # Window Size (R9 pad parity)
+                    self.game.toggle_window_size()
         elif event.type == pygame.JOYAXISMOTION:
             current_time = pygame.time.get_ticks()
             if current_time - self.last_nav_time > 200:
@@ -337,6 +341,8 @@ class SettingsState(GameState):
                         elif self.game.selected_setting == 2:  # SFX Volume
                             self.game.sfx_volume = max(0, self.game.sfx_volume - 0.1)
                             self.game.update_sound_volumes()
+                        elif self.game.selected_setting == 3:  # Window Size (R9 pad parity)
+                            self.game.toggle_window_size()
                         self.last_nav_time = current_time
                     elif event.value > 0.5:  # Right
                         if self.game.selected_setting == 1:  # Music Volume
@@ -345,6 +351,8 @@ class SettingsState(GameState):
                         elif self.game.selected_setting == 2:  # SFX Volume
                             self.game.sfx_volume = min(1, self.game.sfx_volume + 0.1)
                             self.game.update_sound_volumes()
+                        elif self.game.selected_setting == 3:  # Window Size (R9 pad parity)
+                            self.game.toggle_window_size()
                         self.last_nav_time = current_time
         elif event.type == pygame.JOYBUTTONDOWN:
             if event.button == 0:  # A button
@@ -384,20 +392,70 @@ class CreditsState(GameState):
 
 # LoadoutSelectState (PR5 scaffolding)
 class LoadoutSelectState(GameState):
-    """PR5 stub: simple loadout select (archetypes from loadouts.py). Creative: 3 choices, apply on select, back to menu/playing.
-    Input: up/down nav, 1/2/3 direct, RETURN apply+to play, ESC to main menu.
+    """R9 loadout polish: archetype cards, pad nav, last-archetype persist.
+
+    Input: up/down / W/S / hat / stick, 1/2/3 direct, RETURN/SPACE/A apply, ESC/B back.
     """
     def __init__(self, game):
         super().__init__(game)
-        self.options = ["Scout (fast/dash)", "Gunner (dmg)", "Tank (tough)"]
-        self.selected = 0
+        from loadouts import ARCHETYPES
         self.archetypes = ["scout", "gunner", "tank"]
+        self.cards = []
+        for arch in self.archetypes:
+            data = ARCHETYPES.get(arch, ARCHETYPES["scout"])
+            stats = []
+            for key, label in (
+                ("speed_mult", "SPD"),
+                ("health_mult", "HP"),
+                ("damage_mult", "DMG"),
+                ("fire_rate_mult", "ROF"),
+                ("dash_cooldown_mult", "DASH CD"),
+                ("shield_duration_mult", "SHIELD"),
+            ):
+                if key in data:
+                    stats.append(f"{label} x{data[key]:.2g}")
+            abilities = list(data.get("abilities", ["dash"]))
+            self.cards.append({
+                "id": arch,
+                "name": data.get("name", arch.title()),
+                "desc": data.get("desc", ""),
+                "stats": stats,
+                "abilities": abilities,
+            })
+        self.options = [
+            f"{c['name']}: {c['desc']} [{', '.join(c['abilities'])}]"
+            for c in self.cards
+        ]
+        self.selected = 0
+        self.last_nav_time = 0
+
+    def enter(self):
+        # Prefer session pick, else persisted last_archetype
+        arch = None
+        try:
+            if self.game.session and getattr(self.game.session, "selected_archetype", None):
+                arch = self.game.session.selected_archetype
+        except Exception:
+            arch = None
+        if not arch:
+            try:
+                from persistence import get_persistence
+                settings = get_persistence().load_settings()
+                arch = settings.get("last_archetype", "scout")
+            except Exception:
+                arch = "scout"
+        if arch in self.archetypes:
+            self.selected = self.archetypes.index(arch)
+        try:
+            self.game.play_music("menu_ambient")
+        except Exception:
+            pass
 
     def handle_event(self, event):
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_UP:
+            if event.key in (pygame.K_UP, pygame.K_w):
                 self.selected = (self.selected - 1) % len(self.options)
-            elif event.key == pygame.K_DOWN:
+            elif event.key in (pygame.K_DOWN, pygame.K_s):
                 self.selected = (self.selected + 1) % len(self.options)
             elif event.key == pygame.K_1:
                 self.selected = 0
@@ -408,9 +466,28 @@ class LoadoutSelectState(GameState):
             elif event.key == pygame.K_3:
                 self.selected = 2
                 self._apply_selected()
-            elif event.key == pygame.K_RETURN:
+            elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
                 self._apply_selected()
             elif event.key == pygame.K_ESCAPE:
+                self.game.change_state(MenuState(self.game))
+        elif event.type == pygame.JOYHATMOTION:
+            if event.value[1] == 1:
+                self.selected = (self.selected - 1) % len(self.options)
+            elif event.value[1] == -1:
+                self.selected = (self.selected + 1) % len(self.options)
+        elif event.type == pygame.JOYAXISMOTION:
+            now = pygame.time.get_ticks()
+            if now - self.last_nav_time > 200 and event.axis == 1:
+                if event.value < -0.5:
+                    self.selected = (self.selected - 1) % len(self.options)
+                    self.last_nav_time = now
+                elif event.value > 0.5:
+                    self.selected = (self.selected + 1) % len(self.options)
+                    self.last_nav_time = now
+        elif event.type == pygame.JOYBUTTONDOWN:
+            if event.button == 0:  # A
+                self._apply_selected()
+            elif event.button in (1, 7):  # B or Start -> back
                 self.game.change_state(MenuState(self.game))
 
     def _apply_selected(self):
@@ -418,13 +495,20 @@ class LoadoutSelectState(GameState):
         try:
             from loadouts import Loadout
             ld = Loadout(arch)
-            # Persist selection on session BEFORE PlayingState.reset so re-apply keeps it
             if self.game.session:
                 self.game.session.current_loadout = ld
                 self.game.session.selected_archetype = arch
             if self.game.player:
                 ld.apply_to_player(self.game.player, game=self.game)
-            # transition to playing after apply (PR5: loadout then play)
+            # Persist last pick for next visit
+            try:
+                from persistence import get_persistence
+                pers = get_persistence()
+                cur = pers.load_settings()
+                cur["last_archetype"] = arch
+                pers.save_settings(cur)
+            except Exception as ex:
+                print("Loadout persist note:", ex)
             self.game.change_state(PlayingState(self.game))
         except Exception as ex:
             print("LoadoutSelect apply note:", ex)
@@ -434,21 +518,32 @@ class LoadoutSelectState(GameState):
         pass
 
     def draw(self):
-        # Use the proper renderer implementation (virtual surface, scaling, polish)
         try:
-            self.game.renderer.draw_loadout_select(self.game, self.options, self.selected)
+            self.game.renderer.draw_loadout_select(
+                self.game, self.options, self.selected, cards=self.cards
+            )
+        except TypeError:
+            # Older renderer signature fallback
+            try:
+                self.game.renderer.draw_loadout_select(self.game, self.options, self.selected)
+            except Exception:
+                font = self.game.font
+                self.game.screen.fill((10, 0, 30))
+                title = font.render("SELECT LOADOUT", True, (255, 220, 100))
+                self.game.screen.blit(title, (100, 100))
+                for i, opt in enumerate(self.options):
+                    col = (255, 255, 0) if i == self.selected else (255, 255, 255)
+                    txt = font.render(f"{i+1}. {opt}", True, col)
+                    self.game.screen.blit(txt, (120, 180 + i * 40))
         except Exception:
-            # Last-resort fallback (should rarely be needed)
             font = self.game.font
             self.game.screen.fill((10, 0, 30))
             title = font.render("SELECT LOADOUT", True, (255, 220, 100))
             self.game.screen.blit(title, (100, 100))
-            hint = self.game.small_font.render("UP/DOWN or 1/2/3 • SPACE/ENTER to apply • ESC back", True, (200,200,200))
-            self.game.screen.blit(hint, (100, 140))
             for i, opt in enumerate(self.options):
-                col = (255,255,0) if i==self.selected else (255,255,255)
+                col = (255, 255, 0) if i == self.selected else (255, 255, 255)
                 txt = font.render(f"{i+1}. {opt}", True, col)
-                self.game.screen.blit(txt, (120, 180 + i*40))
+                self.game.screen.blit(txt, (120, 180 + i * 40))
 
 
 # ModifierChoiceState (PR8 scaffolding for roguelite Vanguard Protocols)
