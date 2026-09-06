@@ -71,39 +71,74 @@ class Persistence:
 
     # ---------------- Highscores (deduped) ----------------
     def load_highscores(self) -> list:
-        """Single source. Tries new json, falls back to legacy txt, migrates on save."""
-        scores = []
-        # New json first
+        """Single source of score ints (compat). Prefer load_named_highscores for UI."""
+        return [int(e.get("score", 0)) for e in self.load_named_highscores()] or [0] * 5
+
+    def load_named_highscores(self) -> list:
+        """Return up to 10 entries: {name, score, date}. Migrates bare ints / legacy txt."""
+        entries = []
         if os.path.exists(self.highscores_path):
             try:
                 with open(self.highscores_path, "r") as f:
-                    data = json.load(f)
-                    for entry in data.get("scores", []):
-                        if isinstance(entry, dict):
-                            scores.append(int(entry.get("score", 0)))
-                        else:
-                            scores.append(int(entry))
-                return sorted(scores, reverse=True)[:10]
+                    data = json.load(f) or {}
+                for entry in data.get("scores", []):
+                    if isinstance(entry, dict):
+                        name = str(entry.get("name") or entry.get("initials") or "---")[:3].upper()
+                        if not name.strip():
+                            name = "---"
+                        entries.append({
+                            "name": name,
+                            "score": int(entry.get("score", 0) or 0),
+                            "date": entry.get("date") or datetime.now().isoformat(),
+                        })
+                    else:
+                        entries.append({
+                            "name": "---",
+                            "score": int(entry),
+                            "date": datetime.now().isoformat(),
+                        })
             except Exception:
-                pass
+                entries = []
 
-        # Legacy txt (from v1/v2)
-        if os.path.exists(self.legacy_highscore_txt):
+        if not entries and os.path.exists(self.legacy_highscore_txt):
             try:
                 with open(self.legacy_highscore_txt, "r") as f:
                     for line in f:
                         line = line.strip()
                         if line:
-                            scores.append(int(line))
-                # On load of legacy we can migrate on next save
-                return sorted(scores, reverse=True)[:10]
+                            entries.append({
+                                "name": "---",
+                                "score": int(line),
+                                "date": datetime.now().isoformat(),
+                            })
             except Exception:
-                pass
+                entries = []
 
-        return [0] * 5   # original default behavior
+        entries.sort(key=lambda e: int(e.get("score", 0)), reverse=True)
+        return entries[:10]
 
     def save_highscores(self, scores: list):
-        # Preserve any existing survival bests when rewriting arcade/campaign scores
+        """Compat: accept ints or dict entries; preserve names when possible."""
+        named = []
+        existing = {int(e["score"]): e for e in self.load_named_highscores()}
+        for s in scores[:10]:
+            if isinstance(s, dict):
+                named.append({
+                    "name": str(s.get("name") or s.get("initials") or "---")[:3].upper() or "---",
+                    "score": int(s.get("score", 0) or 0),
+                    "date": s.get("date") or datetime.now().isoformat(),
+                })
+            else:
+                sc = int(s)
+                prev = existing.get(sc)
+                named.append({
+                    "name": (prev.get("name") if prev else "---") or "---",
+                    "score": sc,
+                    "date": datetime.now().isoformat(),
+                })
+        self.save_named_highscores(named)
+
+    def save_named_highscores(self, entries: list):
         survival = {}
         if os.path.exists(self.highscores_path):
             try:
@@ -112,21 +147,50 @@ class Persistence:
                     survival = prev.get("survival") or {}
             except Exception:
                 survival = {}
-        data = {
-            "schema": SCHEMA_VERSION,
-            "scores": [{"score": int(s), "date": datetime.now().isoformat()} for s in scores[:10]],
-        }
+        cleaned = []
+        for e in entries[:10]:
+            cleaned.append({
+                "name": str(e.get("name") or "---")[:3].upper() or "---",
+                "score": int(e.get("score", 0) or 0),
+                "date": e.get("date") or datetime.now().isoformat(),
+            })
+        cleaned.sort(key=lambda x: x["score"], reverse=True)
+        data = {"schema": SCHEMA_VERSION, "scores": cleaned[:10]}
         if survival:
             data["survival"] = survival
         self._atomic_write(self.highscores_path, data)
-
-        # Optional: also update legacy txt for very old tools
         try:
             with open(self.legacy_highscore_txt, "w") as f:
-                for s in scores[:10]:
-                    f.write(f"{int(s)}\n")
+                for e in cleaned[:10]:
+                    f.write(f"{int(e['score'])}\n")
         except Exception:
             pass
+
+    def qualifies_for_leaderboard(self, score: int, limit: int = 10) -> bool:
+        try:
+            score = int(score or 0)
+        except Exception:
+            return False
+        if score <= 0:
+            return False
+        entries = self.load_named_highscores()
+        if len(entries) < limit:
+            return True
+        return score > min(int(e.get("score", 0) or 0) for e in entries)
+
+    def add_named_highscore(self, name: str, score: int) -> list:
+        """Insert named score, keep top 10. Returns updated named list."""
+        name = (str(name or "AAA")[:3].upper() or "AAA")
+        try:
+            score = int(score or 0)
+        except Exception:
+            score = 0
+        entries = self.load_named_highscores()
+        entries.append({"name": name, "score": score, "date": datetime.now().isoformat()})
+        entries.sort(key=lambda e: int(e.get("score", 0)), reverse=True)
+        entries = entries[:10]
+        self.save_named_highscores(entries)
+        return entries
 
     # ---------------- Survival bests (R4) ----------------
     def load_survival_best(self) -> dict:
@@ -175,8 +239,12 @@ class Persistence:
             except Exception:
                 scores_payload = []
         if not scores_payload:
-            for s in self.load_highscores():
-                scores_payload.append({"score": int(s), "date": datetime.now().isoformat()})
+            for e in self.load_named_highscores():
+                scores_payload.append({
+                    "name": e.get("name", "---"),
+                    "score": int(e.get("score", 0) or 0),
+                    "date": e.get("date") or datetime.now().isoformat(),
+                })
         data = {
             "schema": SCHEMA_VERSION,
             "scores": scores_payload[:10],

@@ -377,7 +377,7 @@ def test_sequel_features():
         print("OK R4 persistence survival bests coexist with highscores")
 
         from config import MODE_SURVIVAL, VERSION
-        assert VERSION.startswith('3.1')
+        assert VERSION.startswith('3.2')
         g_r4 = Game()
         g_r4.survival = True
         g_r4.game_mode = MODE_SURVIVAL
@@ -420,7 +420,64 @@ def test_sequel_features():
         ps.enter()
         assert g_r4.score == 4242, 'preserve_run must not reset Survival run'
         assert g_r4.preserve_run is False
+
         print("OK R4 Survival milestone shop (claim-1 reuse) + preserve_run")
+
+        # === R5: damage numbers + pause a11y + named leaderboard ===
+        from persistence import Persistence as PersR5
+        import tempfile as _tf_r5
+        td5 = _tf_r5.mkdtemp(prefix='sv_r5_')
+        pers5 = PersR5(base_dir=td5)
+        assert pers5.qualifies_for_leaderboard(100) is True
+        entries = pers5.add_named_highscore('ACE', 2500)
+        assert entries[0]['name'] == 'ACE' and entries[0]['score'] == 2500
+        assert pers5.load_highscores()[0] == 2500
+        named = pers5.load_named_highscores()
+        assert named[0]['name'] == 'ACE'
+        # fill board then check qualify gate
+        for i in range(10):
+            pers5.add_named_highscore('ZZZ', 1000 + i)
+        assert pers5.qualifies_for_leaderboard(999) is False
+        assert pers5.qualifies_for_leaderboard(99999) is True
+        print("OK R5 named highscore persistence + qualify gate")
+
+        from config import VERSION as _ver_r5
+        assert _ver_r5.startswith('3.2')
+        g5 = Game()
+        g5.spawn_damage_number(100, 200, 42, crit=False)
+        g5.spawn_damage_number(110, 210, 99, crit=True)
+        assert len(g5.damage_numbers) == 2
+        g5.update_damage_numbers()
+        assert g5.damage_numbers[0]['ttl'] == 35 or g5.damage_numbers[0]['y'] < 200
+        # pause a11y: P/ESC resume; options nav
+        from game_states import PauseMenuState, NameEntryState, PlayingState as PS5
+        g5.paused = True
+        pause = PauseMenuState(g5)
+        pause.enter()
+        assert pause.options == ['Resume', 'Quit']
+        import pygame as _pg5
+        pause.handle_event(type('E', (), {'type': _pg5.KEYDOWN, 'key': _pg5.K_DOWN, 'unicode': ''})())
+        assert pause.selected == 1
+        pause.handle_event(type('E', (), {'type': _pg5.KEYDOWN, 'key': _pg5.K_p, 'unicode': ''})())
+        assert g5.paused is False
+        # name entry confirm writes initials
+        g5.score = 7777
+        g5._score_saved_this_run = False
+        ne = NameEntryState(g5)
+        ne.chars = ['S', 'V', 'G']
+        # isolate persistence write via monkeypatch game helpers path using temp dir
+        from persistence import Persistence as _Piso, get_persistence as _gp
+        import persistence as _pers_mod
+        _old = _pers_mod._default_persistence
+        _pers_mod._default_persistence = PersR5(base_dir=_tf_r5.mkdtemp(prefix='sv_r5n_'))
+        try:
+            ne._confirm()
+            assert g5._score_saved_this_run is True
+            board = _pers_mod._default_persistence.load_named_highscores()
+            assert any(e.get('name') == 'SVG' and int(e.get('score')) == 7777 for e in board)
+        finally:
+            _pers_mod._default_persistence = _old
+        print("OK R5 damage numbers + pause a11y + name entry")
 
         # loadout select state stub
         from game_states import LoadoutSelectState
@@ -837,7 +894,7 @@ def test_headless_verifier_env_destr_abilities_keys():
 
 def main():
     """Run all tests"""
-    print("🛸 Space Shooter: Stellar Vanguard v3.1 - Test Suite")
+    print("🛸 Space Shooter: Stellar Vanguard v3.2 - Test Suite")
     print("=" * 40)
 
     tests = [
@@ -860,7 +917,7 @@ def main():
     print(f"Test Results: {passed}/{total} tests passed")
 
     if passed == total:
-        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.1 is ready to launch!")
+        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.2 is ready to launch!")
         return 0
     else:
         print("❌ Some tests failed. Please check the errors above.")

@@ -54,7 +54,7 @@ class Game:
                 SCREEN_HEIGHT = 720
             display_flags = 0
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), display_flags)
-        pygame.display.set_caption("Space Shooter: Stellar Vanguard (v3.1)")
+        pygame.display.set_caption("Space Shooter: Stellar Vanguard (v3.2)")
         self.clock = pygame.time.Clock()
         self.fullscreen = want_full  # for toggle and HUD if wanted
         # Sync global screen size so enemy spawn (enemies.py), bullets etc use full res not stale 800
@@ -307,6 +307,10 @@ class Game:
         high_scores = pers.load_highscores()
         self.high_scores = high_scores
         self.high_score = self.high_scores[0] if self.high_scores else 0
+        try:
+            self.named_high_scores = pers.load_named_highscores()
+        except Exception:
+            self.named_high_scores = []
         # Initialize achievements
         self.achievements = {
             'kill_100': False,
@@ -339,6 +343,9 @@ class Game:
         self.death_animation_timer = 0
         # Damage flash timer
         self.damage_flash_timer = 0
+        # R5: floating damage numbers (x,y,value,ttl,crit,vy)
+        self.damage_numbers = []
+        self._score_saved_this_run = False
         # Shake timer
         self.shake_timer = 0
         self.shake_intensity = 0
@@ -349,6 +356,42 @@ class Game:
         if pygame.joystick.get_count() > 0:
             self.joystick = pygame.joystick.Joystick(0)
             self.joystick.init()
+
+    def spawn_damage_number(self, x, y, amount, crit=False):
+        """R5: floating combat feedback. amount may be float; display rounds."""
+        try:
+            val = int(round(float(amount)))
+        except Exception:
+            return
+        if val <= 0:
+            return
+        if not hasattr(self, 'damage_numbers') or self.damage_numbers is None:
+            self.damage_numbers = []
+        self.damage_numbers.append({
+            'x': float(x),
+            'y': float(y),
+            'value': val,
+            'ttl': 45 if crit else 36,
+            'max_ttl': 45 if crit else 36,
+            'crit': bool(crit),
+            'vy': -1.35 if crit else -1.0,
+            'vx': __import__('random').uniform(-0.45, 0.45),
+        })
+        # Cap to avoid HUD spam
+        if len(self.damage_numbers) > 48:
+            self.damage_numbers = self.damage_numbers[-48:]
+
+    def update_damage_numbers(self):
+        nums = getattr(self, 'damage_numbers', None) or []
+        alive = []
+        for n in nums:
+            n['ttl'] -= 1
+            n['x'] += n.get('vx', 0)
+            n['y'] += n.get('vy', -1.0)
+            n['vy'] = n.get('vy', -1.0) * 0.985
+            if n['ttl'] > 0:
+                alive.append(n)
+        self.damage_numbers = alive
 
     def trigger_screen_shake(self, intensity=5, duration=15):
         """Trigger screen shake effect"""
@@ -600,6 +643,12 @@ class Game:
         # Death animation timer (critical for respawn flow; was lost during PR2 slimming of update_game_logic)
         if getattr(self, 'death_animation_timer', 0) > 0:
             self.death_animation_timer -= 1
+
+        # R5 floating damage numbers
+        try:
+            self.update_damage_numbers()
+        except Exception:
+            pass
 
         # Minimal high-level progression that was in the old method (can be moved fully later)
         if self.game_mode == MODE_CAMPAIGN:

@@ -467,6 +467,7 @@ class SimulationWorld:
                 wtype = getattr(bullet, 'weapon_type', 'bullet')
                 dmg = self.calculate_damage(getattr(self.game, 'damage', 1), wtype)
                 enemy.health -= dmg
+                self._spawn_hit_number(enemy, dmg)
                 if enemy.health <= 0:
                     self.handle_enemy_death(enemy)
                 if hasattr(bullet, 'pierce_count'):
@@ -484,6 +485,7 @@ class SimulationWorld:
             for enemy in enemy_list:
                 dmg = self.calculate_damage(2 * getattr(self.game, 'damage', 1), 'missile')
                 enemy.health -= dmg
+                self._spawn_hit_number(enemy, dmg)
                 if enemy.health <= 0:
                     self.handle_enemy_death(enemy)
 
@@ -500,6 +502,7 @@ class SimulationWorld:
             for enemy in enemy_list:
                 dmg = self.calculate_damage(3, 'grenade')
                 enemy.health -= dmg
+                self._spawn_hit_number(enemy, dmg)
                 if enemy.health <= 0:
                     self.handle_enemy_death(enemy)
 
@@ -510,7 +513,9 @@ class SimulationWorld:
                 bomb.explode()
             else:
                 for e in enemy_list:
-                    e.health -= self.calculate_damage(5, 'bomb')
+                    dmg = self.calculate_damage(5, 'bomb')
+                    e.health -= dmg
+                    self._spawn_hit_number(e, dmg)
                     if e.health <= 0:
                         self.handle_enemy_death(e)
 
@@ -518,7 +523,9 @@ class SimulationWorld:
         remote_hits = pygame.sprite.groupcollide(self.remote_bullets, self.enemies, True, False)
         for rb, el in remote_hits.items():
             for e in el:
-                e.health -= self.calculate_damage(1, 'remote')
+                dmg = self.calculate_damage(1, 'remote')
+                e.health -= dmg
+                self._spawn_hit_number(e, dmg)
                 if e.health <= 0:
                     self.handle_enemy_death(e)
 
@@ -567,6 +574,7 @@ class SimulationWorld:
             for enemy in enemy_list:
                 dmg = self.calculate_damage(getattr(self.game, 'damage', 1), 'plasma')
                 enemy.health -= dmg
+                self._spawn_hit_number(enemy, dmg)
                 if hasattr(plasma, 'freezing') and plasma.freezing:
                     enemy.frozen_timer = 300
                     enemy.frozen = True
@@ -652,7 +660,7 @@ class SimulationWorld:
             self.game.explosion_sound.play()
 
     def calculate_damage(self, base_damage, weapon_type=None):
-        """Ported from game.py:840, uses game upgrades."""
+        """Ported from game.py:840, uses game upgrades. Sets _last_hit_crit for R5 floaters."""
         dmg = base_damage * getattr(self.game, 'damage', 1) * getattr(self.game, 'weapon_damage', 1)
         if weapon_type:
             multis = {
@@ -660,9 +668,29 @@ class SimulationWorld:
                 # ... add others as needed
             }
             dmg *= multis.get(weapon_type, 1.0)
-        if random.random() < getattr(self.game, 'crit_chance', 0):
+        is_crit = random.random() < getattr(self.game, 'crit_chance', 0)
+        if is_crit:
             dmg *= getattr(self.game, 'crit_damage', 1.5)
+        self._last_hit_crit = bool(is_crit)
         return dmg
+
+    def _spawn_hit_number(self, enemy, dmg):
+        """R5: emit floating damage at enemy."""
+        try:
+            g = self.game
+            if g is None or not hasattr(g, 'spawn_damage_number'):
+                return
+            rect = getattr(enemy, 'rect', None)
+            if rect is None:
+                return
+            g.spawn_damage_number(
+                rect.centerx + random.randint(-10, 10),
+                rect.centery - 14,
+                dmg,
+                getattr(self, '_last_hit_crit', False),
+            )
+        except Exception:
+            pass
 
 
 
@@ -727,6 +755,7 @@ class SimulationWorld:
                 if not getattr(e, 'is_boss', False):
                     if math.hypot(e.rect.centerx - player.rect.centerx, e.rect.centery - player.rect.centery) < blast_radius:
                         e.health -= explosion_damage
+                        self._spawn_hit_number(e, explosion_damage)
                         if e.health <= 0:
                             if self.game.session:
                                 self.game.session.handle_enemy_death(e)

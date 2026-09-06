@@ -531,6 +531,8 @@ class PlayingState(GameState):
             self.game.preserve_run = False
         elif not self.game.boss_spawned:
             self.game.reset_game()
+            self.game._score_saved_this_run = False
+            self.game.damage_numbers = []
         # R2: ensure mode-menu loadout selection survives reset into Playing
         try:
             sess = getattr(self.game, "session", None)
@@ -720,30 +722,79 @@ class PlayingState(GameState):
     def draw(self):
         self.game.renderer.draw_playing(self.game)
 
-# PauseMenuState
+# PauseMenuState (R5 a11y: keys match UI, nav + pad, dim overlay via renderer)
 class PauseMenuState(GameState):
+    def __init__(self, game):
+        super().__init__(game)
+        self.options = ["Resume", "Quit"]
+        self.selected = 0
+        self.last_nav_time = 0
+
+    def enter(self):
+        self.game.paused = True
+        try:
+            self.game.pause_music()
+        except Exception:
+            pass
+
+    def _resume(self):
+        self.game.paused = False
+        try:
+            self.game.resume_music()
+        except Exception:
+            pass
+        self.game.change_state(PlayingState(self.game))
+
+    def _quit(self):
+        self.game.running = False
+
+    def _activate(self):
+        if self.selected == 0:
+            self._resume()
+        else:
+            self._quit()
+
     def handle_event(self, event):
+        now = pygame.time.get_ticks()
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_r:
-                self.game.paused = False
-                self.game.resume_music()
-                self.game.change_state(PlayingState(self.game))
+            # Always-resume keys (match on-screen hints)
+            if event.key in (pygame.K_p, pygame.K_ESCAPE, pygame.K_r, pygame.K_n):
+                self._resume()
+                return
+            if event.key in (pygame.K_UP, pygame.K_w):
+                self.selected = (self.selected - 1) % len(self.options)
+            elif event.key in (pygame.K_DOWN, pygame.K_s):
+                self.selected = (self.selected + 1) % len(self.options)
+            elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                self._activate()
             elif event.key == pygame.K_q:
-                self.game.running = False
-            elif event.key == pygame.K_n:
-                self.game.paused = False
-                self.game.resume_music()
-                self.game.change_state(PlayingState(self.game))
+                self._quit()
         elif event.type == pygame.JOYBUTTONDOWN:
-            if event.button == 0:  # A button for resume
-                self.game.paused = False
-                self.game.resume_music()
-                self.game.change_state(PlayingState(self.game))
-            elif event.button == 1:  # B button for quit
-                self.game.running = False
+            if event.button in (0, 7):  # A or Start -> resume / activate
+                if event.button == 7:
+                    self._resume()
+                else:
+                    self._activate()
+            elif event.button == 1:  # B quit
+                self._quit()
+        elif event.type == pygame.JOYHATMOTION:
+            hx, hy = event.value
+            if hy > 0 or hx < 0:
+                self.selected = (self.selected - 1) % len(self.options)
+            elif hy < 0 or hx > 0:
+                self.selected = (self.selected + 1) % len(self.options)
+        elif event.type == pygame.JOYAXISMOTION and event.axis in (1,):
+            if now - self.last_nav_time < 180:
+                return
+            if event.value < -0.5:
+                self.selected = (self.selected - 1) % len(self.options)
+                self.last_nav_time = now
+            elif event.value > 0.5:
+                self.selected = (self.selected + 1) % len(self.options)
+                self.last_nav_time = now
 
     def draw(self):
-        self.game.renderer.draw_pause_menu(self.game)
+        self.game.renderer.draw_pause_menu(self.game, getattr(self, 'options', None), getattr(self, 'selected', 0))
 
 # ContinuePromptState
 class ContinuePromptState(GameState):
@@ -842,21 +893,92 @@ class ContinuePromptState(GameState):
     def draw(self):
         self.game.renderer.draw_continue_prompt(self.game, self.options, self.selected)
 
+
+# NameEntryState (R5): 3-letter initials for named high-score leaderboard
+class NameEntryState(GameState):
+    def __init__(self, game):
+        super().__init__(game)
+        self.chars = ["A", "A", "A"]
+        self.cursor = 0
+        self.last_nav_time = 0
+        self.alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+    def enter(self):
+        try:
+            self.game.play_music("menu_ambient")
+        except Exception:
+            pass
+
+    def _cycle(self, delta):
+        idx = self.alphabet.find(self.chars[self.cursor])
+        if idx < 0:
+            idx = 0
+        idx = (idx + delta) % len(self.alphabet)
+        self.chars[self.cursor] = self.alphabet[idx]
+
+    def _confirm(self):
+        name = "".join(self.chars)
+        try:
+            from persistence import get_persistence
+            pers = get_persistence()
+            entries = pers.add_named_highscore(name, int(getattr(self.game, 'score', 0) or 0))
+            self.game.named_high_scores = entries
+            self.game.high_scores = [int(e.get('score', 0)) for e in entries] or [0]
+            self.game.high_score = self.game.high_scores[0] if self.game.high_scores else 0
+            self.game._score_saved_this_run = True
+        except Exception as ex:
+            print("NameEntry save note:", ex)
+            self.game._score_saved_this_run = True
+        self.game.change_state(GameOverState(self.game))
+
+    def handle_event(self, event):
+        now = pygame.time.get_ticks()
+        if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_LEFT, pygame.K_a):
+                self.cursor = (self.cursor - 1) % 3
+            elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                self.cursor = (self.cursor + 1) % 3
+            elif event.key in (pygame.K_UP, pygame.K_w):
+                self._cycle(1)
+            elif event.key in (pygame.K_DOWN, pygame.K_s):
+                self._cycle(-1)
+            elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                self._confirm()
+            elif event.key == pygame.K_ESCAPE:
+                # Skip naming with default AAA
+                self.chars = ["A", "A", "A"]
+                self._confirm()
+            elif event.unicode and event.unicode.isalnum():
+                self.chars[self.cursor] = event.unicode.upper()[:1]
+                self.cursor = min(2, self.cursor + 1)
+        elif event.type == pygame.JOYBUTTONDOWN:
+            if event.button == 0:
+                self._confirm()
+            elif event.button == 1:
+                self.chars = ["A", "A", "A"]
+                self._confirm()
+        elif event.type == pygame.JOYHATMOTION:
+            hx, hy = event.value
+            if hx < 0:
+                self.cursor = (self.cursor - 1) % 3
+            elif hx > 0:
+                self.cursor = (self.cursor + 1) % 3
+            if hy > 0:
+                self._cycle(1)
+            elif hy < 0:
+                self._cycle(-1)
+
+    def draw(self):
+        self.game.renderer.draw_name_entry(self.game, self.chars, self.cursor)
+
 # GameOverState
 class GameOverState(GameState):
     def enter(self):
         self.game.play_music("menu_ambient")
-        # PR3: Use persistence for highscore save (deduped, evolvable, with migration support)
+        # PR3/R5: Survival bests always; arcade named score via NameEntry when qualifying
         try:
             from persistence import get_persistence
             pers = get_persistence()
-            current = pers.load_highscores()
-            current.append(int(self.game.score))
-            pers.save_highscores(sorted(current, reverse=True)[:10])
-
-            # Update in-memory
-            self.game.high_scores = pers.load_highscores()
-            self.game.high_score = self.game.high_scores[0] if self.game.high_scores else 0
             # R4: Survival scoring persist (best time + best score)
             if getattr(self.game, 'survival', False):
                 try:
@@ -868,6 +990,21 @@ class GameOverState(GameState):
                     self.game.best_survival_score = int(best.get('best_score', 0) or 0)
                 except Exception:
                     pass
+            # R5 named leaderboard: prompt for initials if score qualifies and not yet saved
+            if not getattr(self.game, '_score_saved_this_run', False):
+                try:
+                    if pers.qualifies_for_leaderboard(int(getattr(self.game, 'score', 0) or 0)):
+                        self.game.change_state(NameEntryState(self.game))
+                        return
+                except Exception:
+                    pass
+            # Refresh in-memory boards
+            self.game.high_scores = pers.load_highscores()
+            self.game.high_score = self.game.high_scores[0] if self.game.high_scores else 0
+            try:
+                self.game.named_high_scores = pers.load_named_highscores()
+            except Exception:
+                pass
             # save settings example (PR12 polish) e.g. current volumes/diff etc
             try:
                 # Merge into existing settings so F11 fullscreen (and other keys) are not wiped

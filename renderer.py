@@ -951,6 +951,65 @@ class Renderer:
         self.game.screen.blit(back_text, (SCREEN_WIDTH//2 - back_text.get_width()//2, 500))
         pygame.display.flip()
 
+
+    def draw_damage_numbers_to_surface(self, game, surface):
+        """R5: floating damage numbers (crits larger / gold)."""
+        nums = getattr(game, 'damage_numbers', None) or []
+        if not nums:
+            return
+        font = getattr(game, 'small_font', None) or getattr(game, 'font', None)
+        big = getattr(game, 'font', font)
+        for n in nums:
+            try:
+                ttl = max(1, int(n.get('ttl', 1)))
+                max_ttl = max(1, int(n.get('max_ttl', ttl)))
+                alpha = max(40, min(255, int(255 * (ttl / float(max_ttl)))))
+                crit = bool(n.get('crit'))
+                val = int(n.get('value', 0))
+                text = str(val)
+                color = (255, 220, 80) if crit else (255, 240, 240)
+                use_font = big if crit else font
+                if use_font is None:
+                    continue
+                img = use_font.render(text, True, color)
+                img.set_alpha(alpha)
+                x = int(n.get('x', 0) - img.get_width() // 2)
+                y = int(n.get('y', 0))
+                surface.blit(img, (x, y))
+            except Exception:
+                continue
+
+    def draw_name_entry(self, game, chars, cursor):
+        def _draw_name_virtual(game, surface, chars, cursor):
+            vw, vh = surface.get_width(), surface.get_height()
+            for y in range(vh):
+                r = int(20 * (y / float(vh)))
+                g = int(10 * (y / float(vh)))
+                b = int(40 * (y / float(vh)))
+                pygame.draw.line(surface, (r, g, b), (0, y), (vw, y))
+            title = self.render_shadowed_text("NEW HIGH SCORE", GREEN, game.font)
+            surface.blit(title, (vw//2 - title.get_width()//2, int(80 * (vh / float(self.base_height)))))
+            score_txt = self.render_shadowed_text(f"Score: {int(getattr(game, 'score', 0) or 0)}", WHITE, game.small_font)
+            surface.blit(score_txt, (vw//2 - score_txt.get_width()//2, int(140 * (vh / float(self.base_height)))))
+            prompt = self.render_shadowed_text("Enter initials", WHITE, game.small_font)
+            surface.blit(prompt, (vw//2 - prompt.get_width()//2, int(200 * (vh / float(self.base_height)))))
+            # three letter boxes
+            box_w, box_h, gap = 54, 64, 18
+            total_w = 3 * box_w + 2 * gap
+            start_x = vw // 2 - total_w // 2
+            y0 = int(260 * (vh / float(self.base_height)))
+            for i, ch in enumerate(chars[:3]):
+                x = start_x + i * (box_w + gap)
+                col = GREEN if i == cursor else WHITE
+                pygame.draw.rect(surface, col, (x, y0, box_w, box_h), 2)
+                letter = self.render_shadowed_text(str(ch), col, game.font)
+                surface.blit(letter, (x + (box_w - letter.get_width()) // 2, y0 + (box_h - letter.get_height()) // 2))
+            hints = "Left/Right move  Up/Down change  Enter confirm  Esc=AAA"
+            ht = self.render_shadowed_text(hints, (180, 180, 200), game.small_font)
+            surface.blit(ht, (vw//2 - ht.get_width()//2, int(360 * (vh / float(self.base_height)))))
+
+        self._render_virtual_and_blit(lambda g, s: _draw_name_virtual(g, s, chars, cursor), game)
+
     def draw_leaderboard(self, game):
         def _draw_leaderboard_virtual(game, surface):
             vw, vh = surface.get_width(), surface.get_height()
@@ -967,9 +1026,15 @@ class Renderer:
                 pygame.draw.circle(surface, WHITE, (sx, sy), 1)
             leaderboard_title = self.render_shadowed_text("Leaderboard", WHITE, game.font)
             surface.blit(leaderboard_title, (vw//2 - leaderboard_title.get_width()//2, int(50 * (vh / float(self.base_height)))))
-            for i, score in enumerate(game.high_scores):
+            named = getattr(game, 'named_high_scores', None) or []
+            if not named:
+                # fallback to bare ints
+                named = [{"name": "---", "score": int(s)} for s in (getattr(game, 'high_scores', None) or [])]
+            for i, entry in enumerate(named[:10]):
                 rank = i + 1
-                score_text = self.render_shadowed_text(f"{rank}. {score}", GREEN if i == 0 else WHITE, game.small_font)
+                name = str(entry.get('name', '---') or '---')[:3]
+                score = int(entry.get('score', 0) or 0)
+                score_text = self.render_shadowed_text(f"{rank}. {name}  {score}", GREEN if i == 0 else WHITE, game.small_font)
                 surface.blit(score_text, (vw//2 - score_text.get_width()//2, int((100 + i*30) * (vh / float(self.base_height)))))
             back_text = self.render_shadowed_text("Press ESC to go back", WHITE, game.small_font)
             surface.blit(back_text, (vw//2 - back_text.get_width()//2, int(500 * (vh / float(self.base_height)))))
@@ -1005,6 +1070,7 @@ class Renderer:
             # UI on virtual surface
             self.draw_boss_health_to_surface(game, surface)
             self.draw_hud_to_surface(game, surface)
+            self.draw_damage_numbers_to_surface(game, surface)
 
             # Expanded mission panel (toggle with TAB) - drawn on virtual (content will be stretched to fill the whole window)
             if getattr(game, 'show_mission_panel', False):
@@ -1013,28 +1079,45 @@ class Renderer:
         # Use helper to render virtual and blit scaled
         self._render_virtual_and_blit(_draw_playing_virtual, game)
 
-    def draw_pause_menu(self, game):
-        def _draw_pause_virtual(game, surface):
-            # Draw gradient background
+    def draw_pause_menu(self, game, options=None, selected=0):
+        def _draw_pause_virtual(game, surface, options=None, selected=0):
+            # Freeze-frame feel: draw gameplay underlay if possible, else gradient
             sw, sh = surface.get_width(), surface.get_height()
-            for y in range(sh):
-                r = int(25 * (y / float(sh)))
-                g = 0
-                b = int(50 * (y / float(sh)))
-                pygame.draw.line(surface, (r, g, b), (0, y), (sw, y))
-            # Update and draw stars (adapt positions to virtual space)
-            for i in range(len(game.stars)):
-                game.stars[i] = ((game.stars[i][0] - game.star_speed) % self.base_width, int(game.stars[i][1] * (sh / float(SCREEN_HEIGHT))))
-            for star in game.stars:
-                pygame.draw.circle(surface, WHITE, star, 1)
-            pause_title = self.render_shadowed_text("Paused", WHITE, game.font)
-            surface.blit(pause_title, (sw//2 - pause_title.get_width()//2, int(150 * (sh / float(self.base_height)))))
-            resume_text = self.render_shadowed_text("Press P to Resume", GREEN, game.small_font)
-            surface.blit(resume_text, (sw//2 - resume_text.get_width()//2, int(250 * (sh / float(self.base_height)))))
-            quit_text = self.render_shadowed_text("Press Q to Quit", RED, game.small_font)
-            surface.blit(quit_text, (sw//2 - quit_text.get_width()//2, int(300 * (sh / float(self.base_height)))))
+            try:
+                self.draw_background_to_surface(game, surface)
+                self.draw_starfield_to_surface(game, surface)
+                self.draw_sprites_to_surface(game, surface)
+                self.draw_particles_to_surface(game, surface)
+                self.draw_hud_to_surface(game, surface)
+            except Exception:
+                for y in range(sh):
+                    r = int(25 * (y / float(sh)))
+                    g = 0
+                    b = int(50 * (y / float(sh)))
+                    pygame.draw.line(surface, (r, g, b), (0, y), (sw, y))
+            # Dim overlay for a11y contrast
+            dim = pygame.Surface((sw, sh), pygame.SRCALPHA)
+            dim.fill((0, 0, 0, 160))
+            surface.blit(dim, (0, 0))
+            pause_title = self.render_shadowed_text("PAUSED", WHITE, game.font)
+            surface.blit(pause_title, (sw//2 - pause_title.get_width()//2, int(120 * (sh / float(self.base_height)))))
+            opts = options or ["Resume", "Quit"]
+            for i, label in enumerate(opts):
+                col = GREEN if i == selected else WHITE
+                prefix = "> " if i == selected else "  "
+                txt = self.render_shadowed_text(f"{prefix}{label}", col, game.small_font)
+                surface.blit(txt, (sw//2 - txt.get_width()//2, int((220 + i * 40) * (sh / float(self.base_height)))))
+            hints = [
+                "P / ESC / Enter — Resume",
+                "Arrows / WASD — Move",
+                "Q — Quit",
+                "Pad: A/Start resume, B quit",
+            ]
+            for i, h in enumerate(hints):
+                ht = self.render_shadowed_text(h, (180, 180, 200), game.small_font)
+                surface.blit(ht, (sw//2 - ht.get_width()//2, int((340 + i * 28) * (sh / float(self.base_height)))))
 
-        self._render_virtual_and_blit(_draw_pause_virtual, game)
+        self._render_virtual_and_blit(lambda g, s: _draw_pause_virtual(g, s, options, selected), game)
 
     def draw_continue_prompt(self, game, options, selected):
         # Render the playing state to the virtual surface first, then overlay prompt

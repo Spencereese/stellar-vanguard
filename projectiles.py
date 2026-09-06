@@ -177,6 +177,8 @@ class Laser(pygame.sprite.Sprite):
                     if math.hypot(enemy.rect.centerx - trail_pos[0], enemy.rect.centery - trail_pos[1]) < 25:
                         damage = self.game.calculate_damage(0.5, weapon_type)
                         enemy.health -= damage
+                        if hasattr(self, "game") and self.game and hasattr(self.game, "spawn_damage_number"):
+                            self.game.spawn_damage_number(enemy.rect.centerx, enemy.rect.centery - 12, damage, False)
                         if enemy.health <= 0:
                             if self.game.session:
                                 self.game.session.handle_enemy_death(enemy)
@@ -267,6 +269,8 @@ class Bomb(pygame.sprite.Sprite):
                     if math.hypot(e.rect.centerx - self.rect.centerx, e.rect.centery - self.rect.centery) < blast_radius:
                         damage = self.game.calculate_damage(1, 'bomb')
                         e.health -= damage
+                        if hasattr(self, "game") and self.game and hasattr(self.game, "spawn_damage_number"):
+                            self.game.spawn_damage_number(e.rect.centerx, e.rect.centery - 12, damage, False)
                         if e.health <= 0:
                             if self.game.session:
                                 self.game.session.handle_enemy_death(e)
@@ -500,6 +504,8 @@ class Grenade(pygame.sprite.Sprite):
             if math.hypot(e.rect.centerx - self.rect.centerx, e.rect.centery - self.rect.centery) < 80:
                 damage = self.game.calculate_damage(2, 'grenade')
                 e.health -= damage
+                if hasattr(self, "game") and self.game and hasattr(self.game, "spawn_damage_number"):
+                    self.game.spawn_damage_number(e.rect.centerx, e.rect.centery - 12, damage, False)
                 if e.health <= 0:
                     if self.game.session:
                         self.game.session.handle_enemy_death(e)
@@ -575,6 +581,8 @@ class Flamethrower(Bullet):
             if math.hypot(enemy.rect.centerx - self.rect.centerx, enemy.rect.centery - self.rect.centery) < 20:
                 damage = self.game.calculate_damage(self.damage, 'flamethrower')
                 enemy.health -= damage
+                if hasattr(self, "game") and self.game and hasattr(self.game, "spawn_damage_number"):
+                    self.game.spawn_damage_number(enemy.rect.centerx, enemy.rect.centery - 12, damage, False)
                 if enemy.health <= 0:
                     if self.game.session:
                         self.game.session.handle_enemy_death(enemy)
@@ -646,7 +654,10 @@ class Lightning(Laser):
                 chain_lightning.chain_count = self.chain_count - 1
                 chain_lightning.last_hit = closest_enemy
                 self.game.bullets.add(chain_lightning)
-                closest_enemy.health -= self.game.calculate_damage(self.damage, 'lightning')
+                _ld = self.game.calculate_damage(self.damage, 'lightning')
+                closest_enemy.health -= _ld
+                if hasattr(self.game, 'spawn_damage_number'):
+                    self.game.spawn_damage_number(closest_enemy.rect.centerx, closest_enemy.rect.centery - 12, _ld, False)
 
 class BlackHole(Bomb):
     """Black hole that pulls in enemies"""
