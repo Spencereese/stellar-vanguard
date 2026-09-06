@@ -26,6 +26,8 @@ DEFAULT_SETTINGS = {
     "enable_experimental_mp": False,
     "mouse_aim": False,
     "fullscreen": False,  # v3 polish: default windowed (F11 to toggle); no forced fullscreen override
+    "window_width": 960,   # R2: windowed size persisted with F11 toggle
+    "window_height": 720,
 }
 
 
@@ -130,7 +132,16 @@ class Persistence:
         return DEFAULT_SETTINGS.copy()
 
     def save_settings(self, settings: dict):
-        data = {**DEFAULT_SETTINGS, **settings}
+        # Merge with on-disk settings first so partial updates (e.g. GameOver volumes)
+        # cannot wipe F11 fullscreen / window size.
+        existing = {}
+        if os.path.exists(self.settings_path):
+            try:
+                with open(self.settings_path, "r") as f:
+                    existing = json.load(f) or {}
+            except Exception:
+                existing = {}
+        data = {**DEFAULT_SETTINGS, **existing, **settings}
         data["schema"] = SCHEMA_VERSION
         self._atomic_write(self.settings_path, data)
 

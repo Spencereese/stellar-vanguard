@@ -1,4 +1,4 @@
-﻿# SHOP_FIX.md — VERDICT §7 shop blockers
+# SHOP_FIX.md — VERDICT §7 shop blockers
 
 Date: 2026-09-05 (America/New_York)
 Repo: Spencereese/stellar-vanguard @ PC-Culture
@@ -47,9 +47,8 @@ Post-boss block: Victory option, 4 offers + skip, rarities assigned, synergy bia
 
 - No new sequel pillars / enemies / music / generated art.
 - No from-scratch rewrite of renderer.py or game.py.
-- Polish pass deferred (shop+tests already green; prefer stop):
-  - Loadout select persist into PlayingState
-  - E/R/Q no-crash if particles/sounds missing (keys already no-crash in verifier)
-  - Windowed 960x720 + F11 persist (game.py still has dirty 1280 stretch WIP, unstaged)
+- Polish pass (loadout persist / E-R-Q harden / 960+F11) completed in **POLISH_R2.md** (Round 2).
+- Dirty game.py 1280 stretch WIP remains unstaged (stashed around R2 commit, then restored).
 - SEQUEL_STATUS.md not appended.
 - Phaser Idle Quest not started.
+

@@ -111,14 +111,17 @@ class SimulationWorld:
             self.all_sprites.add(player)
         try:
             from loadouts import Loadout
-            if player and not getattr(player, 'current_loadout', None):
-                # Creative default: scout for fun fast play
+            # Prefer an already-selected session loadout (LoadoutSelect -> Playing).
+            # Only default to scout when nothing was chosen yet.
+            if self.current_loadout is not None:
+                self.current_loadout.apply_to_player(player, game=self.game)
+            elif player and not getattr(player, 'current_loadout', None):
                 ld = Loadout("scout")
-                ld.apply_to_player(player)
+                ld.apply_to_player(player, game=self.game)
                 self.current_loadout = ld
-                # Re-apply any speed etc if player init happened before
-                if hasattr(player, 'speed') and 'speed_mult' in ld.stats:
-                    player.speed = getattr(player, 'speed', 5) * ld.stats.get('speed_mult', 1)
+            elif player and getattr(player, 'current_loadout', None) and self.current_loadout is None:
+                self.current_loadout = player.current_loadout
+                self.current_loadout.apply_to_player(player, game=self.game)
         except Exception as ex:
             print("Loadout apply note:", ex)  # non-fatal
             pass
@@ -133,6 +136,7 @@ class SimulationWorld:
         self.style_rank = "D"
         self.combo_timer = 0
         self.active_modifiers = []  # clear for new run (PR7/8)
+        # R2: keep self.current_loadout (selected in LoadoutSelect) across reset
         for g in (self.all_sprites, self.enemies, self.powerups, self.asteroids,
                   self.enemy_bullets, self.bullets, self.remote_bullets,
                   self.missiles, self.plasmas, self.bombs, self.grenades):
@@ -784,10 +788,18 @@ class SimulationWorld:
         pass
 
     def _apply_loadout_and_modifiers(self):
-        """Creative hook for PR6 + PR7. Apply stat changes to player when set."""
+        """Creative hook for PR6 + PR7. Re-apply selected loadout from absolute bases."""
         if self.player and self.current_loadout:
-            # e.g. self.player.speed = base * self.current_loadout.speed_mult
-            pass
+            try:
+                self.current_loadout.apply_to_player(self.player, game=self.game)
+            except Exception as ex:
+                print("Loadout re-apply note:", ex)
+        elif self.player and getattr(self.player, 'current_loadout', None):
+            self.current_loadout = self.player.current_loadout
+            try:
+                self.current_loadout.apply_to_player(self.player, game=self.game)
+            except Exception as ex:
+                print("Loadout re-apply note:", ex)
         for mod in self.active_modifiers:
             if hasattr(mod, 'apply'):
                 mod.apply(self)

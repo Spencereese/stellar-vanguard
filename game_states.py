@@ -410,13 +410,16 @@ class LoadoutSelectState(GameState):
         try:
             from loadouts import Loadout
             ld = Loadout(arch)
+            # Persist selection on session BEFORE PlayingState.reset so re-apply keeps it
             if self.game.session:
                 self.game.session.current_loadout = ld
+                self.game.session.selected_archetype = arch
             if self.game.player:
-                ld.apply_to_player(self.game.player)
+                ld.apply_to_player(self.game.player, game=self.game)
             # transition to playing after apply (PR5: loadout then play)
             self.game.change_state(PlayingState(self.game))
-        except:
+        except Exception as ex:
+            print("LoadoutSelect apply note:", ex)
             self.game.change_state(PlayingState(self.game))
 
     def update(self):
@@ -525,6 +528,23 @@ class PlayingState(GameState):
     def enter(self):
         if not self.game.boss_spawned:
             self.game.reset_game()
+        # R2: ensure mode-menu loadout selection survives reset into Playing
+        try:
+            sess = getattr(self.game, "session", None)
+            ld = getattr(sess, "current_loadout", None) if sess else None
+            if ld is None:
+                arch = getattr(sess, "selected_archetype", None) if sess else None
+                if arch:
+                    from loadouts import Loadout
+                    ld = Loadout(arch)
+                    if sess is not None:
+                        sess.current_loadout = ld
+            if ld is not None and self.game.player is not None:
+                ld.apply_to_player(self.game.player, game=self.game)
+                if sess is not None:
+                    sess.current_loadout = ld
+        except Exception as ex:
+            print("PlayingState loadout re-apply note:", ex)
         self.game.play_music("game_ambient")
 
     def handle_event(self, event):
@@ -559,19 +579,13 @@ class PlayingState(GameState):
                 else:
                     self.game.resume_music()
             elif event.key == pygame.K_e and self.game.death_animation_timer <= 0:
-                # Creative: trigger loadout ability (e.g. EMP)
-                if hasattr(self.game, 'session') and self.game.session and self.game.player:
-                    from loadouts import activate_ability
-                    activate_ability(self.game.player, 'emp', self.game)
-                    # visual feedback
-                    if hasattr(self.game, 'particles'):
-                        try:
-                            from particles import Particle
-                            for _ in range(15):
-                                p = Particle(self.game.player.rect.centerx, self.game.player.rect.centery, (0,255,255), 'smoke')
-                                self.game.particles.append(p)
-                        except:
-                            pass
+                # Creative: trigger loadout ability (e.g. EMP) ? FX hardened in activate_ability
+                try:
+                    if self.game.player:
+                        from loadouts import activate_ability
+                        activate_ability(self.game.player, 'emp', self.game)
+                except Exception:
+                    pass
             elif event.key in (pygame.K_1, pygame.K_2, pygame.K_3) and self.game.death_animation_timer <= 0:
                 # simple choose 1 of 3 stub for modifiers (PR7/8)
                 if hasattr(self.game, 'session') and self.game.session:
@@ -589,24 +603,21 @@ class PlayingState(GameState):
                 except:
                     pass
             elif event.key == pygame.K_r and self.game.death_animation_timer <= 0:
-                # full ability: repair (R)
-                if hasattr(self.game, 'session') and self.game.session and self.game.player:
-                    from loadouts import activate_ability
-                    activate_ability(self.game.player, 'repair', self.game)
+                # full ability: repair (R) ? never crash if particles/sounds missing
+                try:
+                    if self.game.player:
+                        from loadouts import activate_ability
+                        activate_ability(self.game.player, 'repair', self.game)
+                except Exception:
+                    pass
             elif event.key == pygame.K_q and self.game.death_animation_timer <= 0:
-                # other ability stub (Q) - e.g. dash boost or future
-                if hasattr(self.game, 'session') and self.game.session and self.game.player:
-                    from loadouts import activate_ability
-                    activate_ability(self.game.player, 'dash', self.game)  # reuse dash as example
-                    # visual
-                    if hasattr(self.game, 'particles'):
-                        try:
-                            from particles import Particle
-                            for _ in range(8):
-                                p = Particle(self.game.player.rect.centerx, self.game.player.rect.centery, (255,100,100), 'smoke')
-                                self.game.particles.append(p)
-                        except:
-                            pass
+                # other ability stub (Q) - dash boost; FX hardened in activate_ability
+                try:
+                    if self.game.player:
+                        from loadouts import activate_ability
+                        activate_ability(self.game.player, 'dash', self.game)
+                except Exception:
+                    pass
         elif event.type == pygame.JOYBUTTONDOWN:
             if event.button == 0 and self.game.death_animation_timer <= 0:  # A button
                 self.game.player.shoot()
@@ -845,14 +856,18 @@ class GameOverState(GameState):
             self.game.high_score = self.game.high_scores[0] if self.game.high_scores else 0
             # save settings example (PR12 polish) e.g. current volumes/diff etc
             try:
-                pers.save_settings({
+                # Merge into existing settings so F11 fullscreen (and other keys) are not wiped
+                cur = pers.load_settings()
+                cur.update({
                     'music_volume': getattr(self.game, 'music_volume', 0.5),
                     'sfx_volume': getattr(self.game, 'sfx_volume', 0.5),
                     'difficulty': getattr(self.game, 'difficulty', 'normal'),
                     'colorblind_mode': getattr(self.game, 'colorblind_mode', None),
                     'mouse_aim': getattr(self.game, 'mouse_aim', False),
+                    'fullscreen': getattr(self.game, 'fullscreen', cur.get('fullscreen', False)),
                 })
-            except:
+                pers.save_settings(cur)
+            except Exception:
                 pass
         except Exception:
             pass  # graceful during transition

@@ -45,8 +45,13 @@ class Game:
             SCREEN_HEIGHT = info.current_h
             display_flags = pygame.FULLSCREEN
         else:
-            SCREEN_WIDTH = 960
-            SCREEN_HEIGHT = 720
+            # R2 polish: windowed 960x720 (persisted window_* respected if present)
+            try:
+                SCREEN_WIDTH = int(s.get('window_width', 960) or 960)
+                SCREEN_HEIGHT = int(s.get('window_height', 720) or 720)
+            except Exception:
+                SCREEN_WIDTH = 960
+                SCREEN_HEIGHT = 720
             display_flags = 0
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), display_flags)
         pygame.display.set_caption("Space Shooter: Stellar Vanguard (v3.0)")
@@ -338,6 +343,9 @@ class Game:
             pers = get_persistence()
             s = pers.load_settings()
             s['fullscreen'] = self.fullscreen
+            if not self.fullscreen:
+                s['window_width'] = 960
+                s['window_height'] = 720
             pers.save_settings(s)
         except Exception:
             pass
@@ -392,6 +400,18 @@ class Game:
         self.coin_multiplier = self.upgrades.get('coin_multiplier')
         self.exp_multiplier = self.upgrades.get('exp_multiplier')
         self.weapon_damage = self.upgrades.get('weapon_damage')
+        # R2: re-apply selected loadout on top of upgrade bases (absolute, not stacked)
+        try:
+            sess = getattr(self, 'session', None)
+            ld = getattr(sess, 'current_loadout', None) if sess else None
+            if ld is None:
+                ld = getattr(self.player, 'current_loadout', None)
+            if ld is not None:
+                ld.apply_to_player(self.player, game=self)
+                if sess is not None:
+                    sess.current_loadout = ld
+        except Exception:
+            pass
 
     def reset_game(self):
         """Reset with improved delegation to session (combo/rank clears now in sim.reset_for_new_run too). Avoids desync on groups/particles list."""
