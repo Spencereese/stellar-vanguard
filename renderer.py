@@ -1099,7 +1099,11 @@ class Renderer:
 
         self._render_virtual_and_blit(lambda g, s: _draw_name_virtual(g, s, chars, cursor), game)
 
-    def draw_leaderboard(self, game):
+    def draw_leaderboard(self, game, mode_tabs=None, mode_idx=0, diff_tabs=None, diff_idx=0, tab_row=0):
+        """R14: mode + difficulty filter tabs above the ranked list."""
+        mode_tabs = mode_tabs or ["all", "arcade", "campaign", "survival"]
+        diff_tabs = diff_tabs or ["all", "easy", "normal", "hard"]
+
         def _draw_leaderboard_virtual(game, surface):
             vw, vh = surface.get_width(), surface.get_height()
             for y in range(vh):
@@ -1114,19 +1118,80 @@ class Renderer:
                 sy = int((star[1] / float(SCREEN_HEIGHT)) * vh) if SCREEN_HEIGHT else star[1]
                 pygame.draw.circle(surface, WHITE, (sx, sy), 1)
             leaderboard_title = self.render_shadowed_text("Leaderboard", WHITE, game.font)
-            surface.blit(leaderboard_title, (vw//2 - leaderboard_title.get_width()//2, int(50 * (vh / float(self.base_height)))))
+            surface.blit(leaderboard_title, (vw//2 - leaderboard_title.get_width()//2, int(36 * (vh / float(self.base_height)))))
+
+            # Mode tabs
+            mode_y = int(88 * (vh / float(self.base_height)))
+            gap = 12
+            mode_surfs = []
+            for i, label in enumerate(mode_tabs):
+                active = (i == mode_idx)
+                color = GOLD if active else (CYAN if tab_row == 0 else WHITE)
+                txt = self.render_shadowed_text(label.upper(), color, game.small_font)
+                mode_surfs.append((txt, active))
+            total_w = sum(s.get_width() for s, _ in mode_surfs) + gap * (len(mode_surfs) - 1)
+            x = vw // 2 - total_w // 2
+            for txt, active in mode_surfs:
+                if active:
+                    pad = 6
+                    pygame.draw.rect(
+                        surface, GOLD,
+                        (x - pad, mode_y - 2, txt.get_width() + pad * 2, txt.get_height() + 4),
+                        1,
+                    )
+                surface.blit(txt, (x, mode_y))
+                x += txt.get_width() + gap
+
+            # Difficulty tabs
+            diff_y = int(118 * (vh / float(self.base_height)))
+            diff_surfs = []
+            for i, label in enumerate(diff_tabs):
+                active = (i == diff_idx)
+                color = GOLD if active else (CYAN if tab_row == 1 else WHITE)
+                txt = self.render_shadowed_text(label.upper(), color, game.small_font)
+                diff_surfs.append((txt, active))
+            total_w = sum(s.get_width() for s, _ in diff_surfs) + gap * (len(diff_surfs) - 1)
+            x = vw // 2 - total_w // 2
+            for txt, active in diff_surfs:
+                if active:
+                    pad = 6
+                    pygame.draw.rect(
+                        surface, GOLD,
+                        (x - pad, diff_y - 2, txt.get_width() + pad * 2, txt.get_height() + 4),
+                        1,
+                    )
+                surface.blit(txt, (x, diff_y))
+                x += txt.get_width() + gap
+
             named = getattr(game, 'named_high_scores', None) or []
             if not named:
-                # fallback to bare ints
                 named = [{"name": "---", "score": int(s)} for s in (getattr(game, 'high_scores', None) or [])]
+            list_y0 = 155
+            if not named:
+                empty = self.render_shadowed_text("No scores for this filter", GRAY, game.small_font)
+                surface.blit(empty, (vw//2 - empty.get_width()//2, int(list_y0 * (vh / float(self.base_height)))))
             for i, entry in enumerate(named[:10]):
                 rank = i + 1
                 name = str(entry.get('name', '---') or '---')[:3]
                 score = int(entry.get('score', 0) or 0)
-                score_text = self.render_shadowed_text(f"{rank}. {name}  {score}", GREEN if i == 0 else WHITE, game.small_font)
-                surface.blit(score_text, (vw//2 - score_text.get_width()//2, int((100 + i*30) * (vh / float(self.base_height)))))
-            back_text = self.render_shadowed_text("Press ESC to go back", WHITE, game.small_font)
-            surface.blit(back_text, (vw//2 - back_text.get_width()//2, int(500 * (vh / float(self.base_height)))))
+                mode = str(entry.get('mode', '') or '')
+                diff = str(entry.get('difficulty', '') or '')
+                meta = ""
+                if mode or diff:
+                    meta = f"  [{mode}/{diff}]" if mode and diff else f"  [{mode or diff}]"
+                score_text = self.render_shadowed_text(
+                    f"{rank}. {name}  {score}{meta}",
+                    GREEN if i == 0 else WHITE,
+                    game.small_font,
+                )
+                surface.blit(score_text, (vw//2 - score_text.get_width()//2, int((list_y0 + i*28) * (vh / float(self.base_height)))))
+
+            hint = self.render_shadowed_text(
+                "Q/E Mode  [/] Diff  Tab row  ESC back",
+                WHITE,
+                game.small_font,
+            )
+            surface.blit(hint, (vw//2 - hint.get_width()//2, int(500 * (vh / float(self.base_height)))))
 
         self._render_virtual_and_blit(_draw_leaderboard_virtual, game)
 

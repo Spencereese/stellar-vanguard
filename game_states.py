@@ -236,18 +236,111 @@ class TutorialState(GameState):
     def draw(self):
         self.game.renderer.draw_tutorial(self.game)
 
-# LeaderboardState
+# LeaderboardState (R14: mode + difficulty filter tabs)
 class LeaderboardState(GameState):
+    MODE_TABS = ["all", "arcade", "campaign", "survival"]
+    DIFF_TABS = ["all", "easy", "normal", "hard"]
+
+    def __init__(self, game):
+        super().__init__(game)
+        self.mode_idx = 0  # ALL
+        self.diff_idx = 0  # ALL
+        self.tab_row = 0   # 0=mode, 1=difficulty
+        self.last_nav_time = 0
+
+    def enter(self):
+        try:
+            self.game.play_music("menu_ambient")
+        except Exception:
+            pass
+        self._refresh_board()
+
+    def _refresh_board(self):
+        mode = self.MODE_TABS[self.mode_idx]
+        diff = self.DIFF_TABS[self.diff_idx]
+        try:
+            from persistence import get_persistence
+            pers = get_persistence()
+            named = pers.load_named_highscores(
+                mode=None if mode == "all" else mode,
+                difficulty=None if diff == "all" else diff,
+            )
+            self.game.named_high_scores = named
+            self.game.high_scores = [int(e.get("score", 0)) for e in named] or [0]
+        except Exception:
+            self.game.named_high_scores = getattr(self.game, "named_high_scores", []) or []
+
+    def _cycle_mode(self, delta):
+        self.mode_idx = (self.mode_idx + delta) % len(self.MODE_TABS)
+        self._refresh_board()
+
+    def _cycle_diff(self, delta):
+        self.diff_idx = (self.diff_idx + delta) % len(self.DIFF_TABS)
+        self._refresh_board()
+
     def handle_event(self, event):
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 self.game.change_state(MenuState(self.game))
+            elif event.key in (pygame.K_q,):
+                self._cycle_mode(-1)
+            elif event.key in (pygame.K_e,):
+                self._cycle_mode(1)
+            elif event.key in (pygame.K_LEFT, pygame.K_a):
+                if self.tab_row == 0:
+                    self._cycle_mode(-1)
+                else:
+                    self._cycle_diff(-1)
+            elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                if self.tab_row == 0:
+                    self._cycle_mode(1)
+                else:
+                    self._cycle_diff(1)
+            elif event.key in (pygame.K_UP, pygame.K_w):
+                self.tab_row = 0
+            elif event.key in (pygame.K_DOWN, pygame.K_s):
+                self.tab_row = 1
+            elif event.key in (pygame.K_LEFTBRACKET,):
+                self._cycle_diff(-1)
+            elif event.key in (pygame.K_RIGHTBRACKET,):
+                self._cycle_diff(1)
+            elif event.key == pygame.K_TAB:
+                self.tab_row = 1 - self.tab_row
         elif event.type == pygame.JOYBUTTONDOWN:
-            if event.button == 0 or event.button == 7:  # A or Start button
+            if event.button == 0 or event.button == 7:  # A or Start -> back (legacy)
                 self.game.change_state(MenuState(self.game))
+            elif event.button == 1:  # B back
+                self.game.change_state(MenuState(self.game))
+            elif event.button == 4:  # LB mode prev
+                self._cycle_mode(-1)
+            elif event.button == 5:  # RB mode next
+                self._cycle_mode(1)
+        elif event.type == pygame.JOYHATMOTION:
+            hx, hy = event.value
+            if hy > 0:
+                self.tab_row = 0
+            elif hy < 0:
+                self.tab_row = 1
+            if hx < 0:
+                if self.tab_row == 0:
+                    self._cycle_mode(-1)
+                else:
+                    self._cycle_diff(-1)
+            elif hx > 0:
+                if self.tab_row == 0:
+                    self._cycle_mode(1)
+                else:
+                    self._cycle_diff(1)
 
     def draw(self):
-        self.game.renderer.draw_leaderboard(self.game)
+        self.game.renderer.draw_leaderboard(
+            self.game,
+            mode_tabs=self.MODE_TABS,
+            mode_idx=self.mode_idx,
+            diff_tabs=self.DIFF_TABS,
+            diff_idx=self.diff_idx,
+            tab_row=self.tab_row,
+        )
 
 # SettingsState
 class SettingsState(GameState):
@@ -1145,8 +1238,19 @@ class NameEntryState(GameState):
         try:
             from persistence import get_persistence
             pers = get_persistence()
-            entries = pers.add_named_highscore(name, int(getattr(self.game, 'score', 0) or 0))
-            self.game.named_high_scores = entries
+            mode = getattr(self.game, 'game_mode', None) or 'arcade'
+            if getattr(self.game, 'survival', False):
+                mode = 'survival'
+            diff = getattr(self.game, 'difficulty', 'normal') or 'normal'
+            entries = pers.add_named_highscore(
+                name,
+                int(getattr(self.game, 'score', 0) or 0),
+                mode=mode,
+                difficulty=diff,
+            )
+            # Keep in-memory board as overall top view for HUD/compat
+            self.game.named_high_scores = pers.load_named_highscores()
+            entries = self.game.named_high_scores
             self.game.high_scores = [int(e.get('score', 0)) for e in entries] or [0]
             self.game.high_score = self.game.high_scores[0] if self.game.high_scores else 0
             self.game._score_saved_this_run = True
@@ -1217,7 +1321,15 @@ class GameOverState(GameState):
             # R5 named leaderboard: prompt for initials if score qualifies and not yet saved
             if not getattr(self.game, '_score_saved_this_run', False):
                 try:
-                    if pers.qualifies_for_leaderboard(int(getattr(self.game, 'score', 0) or 0)):
+                    _mode = getattr(self.game, 'game_mode', None) or 'arcade'
+                    if getattr(self.game, 'survival', False):
+                        _mode = 'survival'
+                    _diff = getattr(self.game, 'difficulty', 'normal') or 'normal'
+                    if pers.qualifies_for_leaderboard(
+                        int(getattr(self.game, 'score', 0) or 0),
+                        mode=_mode,
+                        difficulty=_diff,
+                    ):
                         self.game.change_state(NameEntryState(self.game))
                         return
                 except Exception:

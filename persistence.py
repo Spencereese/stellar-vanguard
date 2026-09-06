@@ -71,33 +71,59 @@ class Persistence:
                 shutil.copy2(self.upgrades_path, backup)
 
     # ---------------- Highscores (deduped) ----------------
-    def load_highscores(self) -> list:
-        """Single source of score ints (compat). Prefer load_named_highscores for UI."""
-        return [int(e.get("score", 0)) for e in self.load_named_highscores()] or [0] * 5
+    # R14: entries carry optional mode + difficulty for leaderboard tabs.
+    # Pool keeps more than top-10 so per-mode/diff boards stay meaningful.
+    HS_POOL_LIMIT = 90
+    HS_VIEW_LIMIT = 10
+    VALID_HS_MODES = ("arcade", "campaign", "survival")
+    VALID_HS_DIFFS = ("easy", "normal", "hard")
 
-    def load_named_highscores(self) -> list:
-        """Return up to 10 entries: {name, score, date}. Migrates bare ints / legacy txt."""
+    def _normalize_hs_mode(self, mode) -> str:
+        m = str(mode or "arcade").strip().lower()
+        if m in ("mode_campaign",):
+            m = "campaign"
+        if m not in self.VALID_HS_MODES:
+            m = "arcade"
+        return m
+
+    def _normalize_hs_diff(self, difficulty) -> str:
+        d = str(difficulty or "normal").strip().lower()
+        if d not in self.VALID_HS_DIFFS:
+            d = "normal"
+        return d
+
+    def _coerce_hs_entry(self, entry) -> dict:
+        if isinstance(entry, dict):
+            name = str(entry.get("name") or entry.get("initials") or "---")[:3].upper()
+            if not name.strip():
+                name = "---"
+            mode = entry.get("mode")
+            diff = entry.get("difficulty")
+            # Legacy rows without mode/diff migrate as arcade/normal
+            return {
+                "name": name,
+                "score": int(entry.get("score", 0) or 0),
+                "date": entry.get("date") or datetime.now().isoformat(),
+                "mode": self._normalize_hs_mode(mode if mode is not None else "arcade"),
+                "difficulty": self._normalize_hs_diff(diff if diff is not None else "normal"),
+            }
+        return {
+            "name": "---",
+            "score": int(entry),
+            "date": datetime.now().isoformat(),
+            "mode": "arcade",
+            "difficulty": "normal",
+        }
+
+    def _load_all_named_highscores(self) -> list:
+        """Full pool (unfiltered), newest schema fields included."""
         entries = []
         if os.path.exists(self.highscores_path):
             try:
                 with open(self.highscores_path, "r") as f:
                     data = json.load(f) or {}
                 for entry in data.get("scores", []):
-                    if isinstance(entry, dict):
-                        name = str(entry.get("name") or entry.get("initials") or "---")[:3].upper()
-                        if not name.strip():
-                            name = "---"
-                        entries.append({
-                            "name": name,
-                            "score": int(entry.get("score", 0) or 0),
-                            "date": entry.get("date") or datetime.now().isoformat(),
-                        })
-                    else:
-                        entries.append({
-                            "name": "---",
-                            "score": int(entry),
-                            "date": datetime.now().isoformat(),
-                        })
+                    entries.append(self._coerce_hs_entry(entry))
             except Exception:
                 entries = []
 
@@ -107,36 +133,51 @@ class Persistence:
                     for line in f:
                         line = line.strip()
                         if line:
-                            entries.append({
-                                "name": "---",
-                                "score": int(line),
-                                "date": datetime.now().isoformat(),
-                            })
+                            entries.append(self._coerce_hs_entry(int(line)))
             except Exception:
                 entries = []
 
         entries.sort(key=lambda e: int(e.get("score", 0)), reverse=True)
-        return entries[:10]
+        return entries[: self.HS_POOL_LIMIT]
+
+    def load_highscores(self) -> list:
+        """Single source of score ints (compat). Prefer load_named_highscores for UI."""
+        return [int(e.get("score", 0)) for e in self.load_named_highscores()] or [0] * 5
+
+    def load_named_highscores(self, mode=None, difficulty=None, limit=None) -> list:
+        """Return top entries: {name, score, date, mode, difficulty}.
+
+        R14: optional mode/difficulty filters for leaderboard tabs.
+        mode/difficulty None or 'all' => no filter on that axis.
+        Default limit is HS_VIEW_LIMIT (10). Pass limit=0 or None for view default;
+        use _load_all / large limit when rewriting the pool.
+        """
+        if limit is None:
+            limit = self.HS_VIEW_LIMIT
+        entries = self._load_all_named_highscores()
+        mode_f = None if mode in (None, "", "all") else self._normalize_hs_mode(mode)
+        diff_f = None if difficulty in (None, "", "all") else self._normalize_hs_diff(difficulty)
+        if mode_f:
+            entries = [e for e in entries if e.get("mode") == mode_f]
+        if diff_f:
+            entries = [e for e in entries if e.get("difficulty") == diff_f]
+        entries.sort(key=lambda e: int(e.get("score", 0)), reverse=True)
+        return entries[:limit] if limit else entries
 
     def save_highscores(self, scores: list):
         """Compat: accept ints or dict entries; preserve names when possible."""
         named = []
-        existing = {int(e["score"]): e for e in self.load_named_highscores()}
-        for s in scores[:10]:
+        existing = {int(e["score"]): e for e in self._load_all_named_highscores()}
+        for s in scores[: self.HS_VIEW_LIMIT]:
             if isinstance(s, dict):
-                named.append({
-                    "name": str(s.get("name") or s.get("initials") or "---")[:3].upper() or "---",
-                    "score": int(s.get("score", 0) or 0),
-                    "date": s.get("date") or datetime.now().isoformat(),
-                })
+                named.append(self._coerce_hs_entry(s))
             else:
                 sc = int(s)
                 prev = existing.get(sc)
-                named.append({
-                    "name": (prev.get("name") if prev else "---") or "---",
-                    "score": sc,
-                    "date": datetime.now().isoformat(),
-                })
+                if prev:
+                    named.append(dict(prev))
+                else:
+                    named.append(self._coerce_hs_entry(sc))
         self.save_named_highscores(named)
 
     def save_named_highscores(self, entries: list):
@@ -148,51 +189,62 @@ class Persistence:
                     survival = prev.get("survival") or {}
             except Exception:
                 survival = {}
-        cleaned = []
-        for e in entries[:10]:
-            cleaned.append({
-                "name": str(e.get("name") or "---")[:3].upper() or "---",
-                "score": int(e.get("score", 0) or 0),
-                "date": e.get("date") or datetime.now().isoformat(),
-            })
+        cleaned = [self._coerce_hs_entry(e) for e in (entries or [])]
         cleaned.sort(key=lambda x: x["score"], reverse=True)
-        data = {"schema": SCHEMA_VERSION, "scores": cleaned[:10]}
+        cleaned = cleaned[: self.HS_POOL_LIMIT]
+        data = {"schema": SCHEMA_VERSION, "scores": cleaned}
         if survival:
             data["survival"] = survival
         self._atomic_write(self.highscores_path, data)
         try:
             with open(self.legacy_highscore_txt, "w") as f:
-                for e in cleaned[:10]:
+                # Legacy txt: overall top view scores only
+                for e in cleaned[: self.HS_VIEW_LIMIT]:
                     f.write(f"{int(e['score'])}\n")
         except Exception:
             pass
 
-    def qualifies_for_leaderboard(self, score: int, limit: int = 10) -> bool:
+    def qualifies_for_leaderboard(self, score: int, limit: int = 10, mode=None, difficulty=None) -> bool:
         try:
             score = int(score or 0)
         except Exception:
             return False
         if score <= 0:
             return False
-        entries = self.load_named_highscores()
+        entries = self.load_named_highscores(mode=mode, difficulty=difficulty, limit=limit)
         if len(entries) < limit:
             return True
         return score > min(int(e.get("score", 0) or 0) for e in entries)
 
-    def add_named_highscore(self, name: str, score: int) -> list:
-        """Insert named score, keep top 10. Returns updated named list."""
+    def add_named_highscore(self, name: str, score: int, mode=None, difficulty=None) -> list:
+        """Insert named score with mode/difficulty; keep pool. Returns filtered view list.
+
+        Returns top view for the entry's mode+difficulty (R14 tabs), falling back to
+        overall top-10 when mode/diff omitted (R5 compat).
+        """
         name = (str(name or "AAA")[:3].upper() or "AAA")
         try:
             score = int(score or 0)
         except Exception:
             score = 0
-        entries = self.load_named_highscores()
-        entries.append({"name": name, "score": score, "date": datetime.now().isoformat()})
+        mode_n = self._normalize_hs_mode(mode if mode is not None else "arcade")
+        diff_n = self._normalize_hs_diff(difficulty if difficulty is not None else "normal")
+        entries = self._load_all_named_highscores()
+        entries.append({
+            "name": name,
+            "score": score,
+            "date": datetime.now().isoformat(),
+            "mode": mode_n,
+            "difficulty": diff_n,
+        })
         entries.sort(key=lambda e: int(e.get("score", 0)), reverse=True)
-        entries = entries[:10]
+        entries = entries[: self.HS_POOL_LIMIT]
         self.save_named_highscores(entries)
-        return entries
-
+        # R5 callers expect top board including the new score; return overall top view
+        # when called without explicit mode/diff (legacy). With mode/diff, return that tab.
+        if mode is None and difficulty is None:
+            return self.load_named_highscores()
+        return self.load_named_highscores(mode=mode_n, difficulty=diff_n)
     # ---------------- Survival bests (R4) ----------------
     def load_survival_best(self) -> dict:
         """Return {best_time: float seconds, best_score: int}. Defaults to zeros."""

@@ -816,7 +816,7 @@ def test_sequel_features():
 
         # === R13: Pause menu hub (audio / restart / main menu) ===
         from config import VERSION as _ver_r13
-        assert _ver_r13.startswith("3.10")
+        assert _ver_r13.startswith("3.")
         from game_states import PauseMenuState as _PMS13, MenuState as _MS13, PlayingState as _PS13
         import pygame as _pg_r13
         g13 = Game()
@@ -871,6 +871,79 @@ def test_sequel_features():
         p13c.handle_event(type("E", (), {"type": _pg_r13.KEYDOWN, "key": _pg_r13.K_RETURN, "unicode": ""})())
         assert g13c.running is False
         print("OK R13 Pause menu hub (volume/restart/menu/quit)")
+
+        # === R14: Leaderboard mode + difficulty filter tabs ===
+        from config import VERSION as _ver_r14
+        assert _ver_r14.startswith("3.11") or _ver_r14 >= "3.11"
+        from persistence import Persistence as PersR14
+        import tempfile as _tf_r14
+        import persistence as _pers_mod_r14
+        td14 = _tf_r14.mkdtemp(prefix="sv_r14_")
+        pers14 = PersR14(base_dir=td14)
+        pers14.add_named_highscore("ARC", 5000, mode="arcade", difficulty="normal")
+        pers14.add_named_highscore("CMP", 4000, mode="campaign", difficulty="hard")
+        pers14.add_named_highscore("SRV", 3000, mode="survival", difficulty="easy")
+        pers14.add_named_highscore("ARH", 4500, mode="arcade", difficulty="hard")
+        assert len(pers14.load_named_highscores()) >= 4
+        arcade_only = pers14.load_named_highscores(mode="arcade")
+        assert all(e.get("mode") == "arcade" for e in arcade_only)
+        assert any(e.get("name") == "ARC" for e in arcade_only)
+        assert not any(e.get("name") == "SRV" for e in arcade_only)
+        hard_only = pers14.load_named_highscores(difficulty="hard")
+        assert all(e.get("difficulty") == "hard" for e in hard_only)
+        assert {e.get("name") for e in hard_only} >= {"CMP", "ARH"}
+        camp_hard = pers14.load_named_highscores(mode="campaign", difficulty="hard")
+        assert len(camp_hard) == 1 and camp_hard[0]["name"] == "CMP"
+        # qualify gate is per mode+diff bucket
+        for _i in range(10):
+            pers14.add_named_highscore("ZZZ", 100 + _i, mode="arcade", difficulty="normal")
+        assert pers14.qualifies_for_leaderboard(50, mode="arcade", difficulty="normal") is False
+        assert pers14.qualifies_for_leaderboard(99999, mode="arcade", difficulty="normal") is True
+        # survival/easy board still open
+        assert pers14.qualifies_for_leaderboard(50, mode="survival", difficulty="easy") is True
+        from game_states import LeaderboardState as _LBS14
+        import pygame as _pg_r14
+        _old_p14 = getattr(_pers_mod_r14, "_default_persistence", None)
+        _pers_mod_r14._default_persistence = pers14
+        try:
+            g14 = Game()
+            lb = _LBS14(g14)
+            lb.enter()
+            assert lb.MODE_TABS == ["all", "arcade", "campaign", "survival"]
+            assert lb.DIFF_TABS == ["all", "easy", "normal", "hard"]
+            assert lb.mode_idx == 0 and lb.diff_idx == 0
+            names_all = {e.get("name") for e in (g14.named_high_scores or [])}
+            assert "ARC" in names_all and "SRV" in names_all
+            # Q/E cycles mode
+            lb.handle_event(type("E", (), {"type": _pg_r14.KEYDOWN, "key": _pg_r14.K_e, "unicode": ""})())
+            assert lb.MODE_TABS[lb.mode_idx] == "arcade"
+            assert all(e.get("mode") == "arcade" for e in (g14.named_high_scores or []))
+            lb.handle_event(type("E", (), {"type": _pg_r14.KEYDOWN, "key": _pg_r14.K_e, "unicode": ""})())
+            assert lb.MODE_TABS[lb.mode_idx] == "campaign"
+            assert all(e.get("mode") == "campaign" for e in (g14.named_high_scores or []))
+            # switch to diff row and filter hard
+            lb.handle_event(type("E", (), {"type": _pg_r14.KEYDOWN, "key": _pg_r14.K_TAB, "unicode": ""})())
+            assert lb.tab_row == 1
+            # cycle to hard
+            while lb.DIFF_TABS[lb.diff_idx] != "hard":
+                lb.handle_event(type("E", (), {"type": _pg_r14.KEYDOWN, "key": _pg_r14.K_RIGHTBRACKET, "unicode": ""})())
+            assert lb.DIFF_TABS[lb.diff_idx] == "hard"
+            assert len(g14.named_high_scores) == 1 and g14.named_high_scores[0]["name"] == "CMP"
+            # NameEntry stamps mode/diff from game
+            g14.score = 8888
+            g14.game_mode = "survival"
+            g14.survival = True
+            g14.difficulty = "hard"
+            g14._score_saved_this_run = False
+            from game_states import NameEntryState as _NES14
+            ne14 = _NES14(g14)
+            ne14.chars = ["R", "1", "4"]
+            ne14._confirm()
+            surv_hard = pers14.load_named_highscores(mode="survival", difficulty="hard")
+            assert any(e.get("name") == "R14" and int(e.get("score")) == 8888 for e in surv_hard)
+        finally:
+            _pers_mod_r14._default_persistence = _old_p14
+        print("OK R14 Leaderboard mode/difficulty tabs + filtered persist")
         # loadout select state (R9 polish)
         from game_states import LoadoutSelectState
         los = LoadoutSelectState(g)
@@ -1288,7 +1361,7 @@ def test_headless_verifier_env_destr_abilities_keys():
 
 def main():
     """Run all tests"""
-    print("🛸 Space Shooter: Stellar Vanguard v3.10 - Test Suite")
+    print("🛸 Space Shooter: Stellar Vanguard v3.11 - Test Suite")
     print("=" * 40)
 
     tests = [
@@ -1311,7 +1384,7 @@ def main():
     print(f"Test Results: {passed}/{total} tests passed")
 
     if passed == total:
-        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.10 is ready to launch!")
+        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.11 is ready to launch!")
         return 0
     else:
         print("❌ Some tests failed. Please check the errors above.")
