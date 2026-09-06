@@ -905,6 +905,7 @@ class ShopState(GameState):
             self.free_rerolls = 1 + (1 if rank in ('S', 'A') else (1 if rank == 'B' else 0))
             self.rerolls_remaining = self.free_rerolls
             self.has_claimed_reward = False
+            self.claimed_item_name = None
             self.post_boss_items = self._generate_post_boss_choices(3)
             self.category_items = self.post_boss_items
             self.categories = ["boss rewards"]
@@ -1118,24 +1119,31 @@ class ShopState(GameState):
             # Reroll handling (post uses free then paid; main paid) - top level to avoid elif swallowing
             if event.key == pygame.K_r:
                 if getattr(self, 'is_post_boss', False):
-                    # Post-boss: free (rank) first, then affordable paid rerolls (escalating optional)
-                    if self.rerolls_remaining > 0:
-                        cost = 0
-                        self.rerolls_remaining -= 1
-                    else:
-                        cost = 50  # simple paid after frees
-                    if cost > 0 and self.game.coins < cost:
-                        self.purchase_message = f"Not enough for reroll ({cost}💰)!"
+                    # Post-boss: after claim no more R; else free then paid 50
+                    if getattr(self, 'has_claimed_reward', False):
+                        self.purchase_message = "Reward claimed - ESC to continue."
                         self.purchase_message_time = pygame.time.get_ticks()
                     else:
-                        if cost > 0:
-                            self.game.coins -= cost
-                        self.post_boss_items = self._generate_post_boss_choices(3)
-                        self.category_items = self.post_boss_items
-                        self.game.selected_item = 0
-                        fr = self.rerolls_remaining
-                        self.purchase_message = f"Rerolled! ({fr} free left)" if fr > 0 else "Rerolled (paid 50)"
-                        self.purchase_message_time = pygame.time.get_ticks()
+                        if self.rerolls_remaining > 0:
+                            cost = 0
+                            self.rerolls_remaining -= 1
+                        else:
+                            cost = 50  # paid after free rerolls exhausted
+                        if cost > 0 and self.game.coins < cost:
+                            self.purchase_message = f"Not enough for reroll ({cost})!"
+                            self.purchase_message_time = pygame.time.get_ticks()
+                        else:
+                            if cost > 0:
+                                self.game.coins -= cost
+                            self.post_boss_items = self._generate_post_boss_choices(3)
+                            self.category_items = self.post_boss_items
+                            self.game.selected_item = 0
+                            fr = self.rerolls_remaining
+                            if cost == 0:
+                                self.purchase_message = f"Rerolled! ({fr} free left)"
+                            else:
+                                self.purchase_message = "Rerolled (paid 50)"
+                            self.purchase_message_time = pygame.time.get_ticks()
                 else:
                     # Main shop featured reroll (paid)
                     reroll_cost = 150
@@ -1197,6 +1205,7 @@ class ShopState(GameState):
                         if getattr(self, 'is_post_boss', False):
                             # Post-boss: claim exactly one (Hades boon feel). Mark + lock further.
                             self.has_claimed_reward = True
+                            self.claimed_item_name = item.get('name')
                             self.rerolls_remaining = 0
                             name = item.get('name')
                             # Keep only the chosen + skip for clean "continue" UX
@@ -1306,6 +1315,7 @@ class ShopState(GameState):
                         self.purchase_message_time = pygame.time.get_ticks()
                         if getattr(self, 'is_post_boss', False):
                             self.has_claimed_reward = True
+                            self.claimed_item_name = item.get('name')
                             self.rerolls_remaining = 0
                             name = item.get('name')
                             self.category_items = [it for it in self.category_items if it.get('name') == name or it.get('skip')]

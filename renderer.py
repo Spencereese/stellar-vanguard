@@ -25,7 +25,7 @@ class Renderer:
 
     def _render_virtual_and_blit(self, draw_callback, game, *cb_args):
         """Helper: draw into virtual surface using draw_callback(game, surface, *cb_args),
-        then scale to screen preserving aspect and letterbox if necessary."""
+        then stretch to exactly the current window size so the game always takes up the *entire* window (no letterboxing/black bars)."""
         virtual = self._create_virtual_surface()
         # Clear virtual surface
         virtual.fill((0, 0, 0))
@@ -37,23 +37,16 @@ class Renderer:
         finally:
             self.ui_scale = old_scale
 
-        # Compute scale to fit screen while preserving aspect
         sw = SCREEN_WIDTH
         sh = SCREEN_HEIGHT
-        scale = min(sw / float(self.base_width), sh / float(self.base_height))
-        scaled_w = max(1, int(self.base_width * scale))
-        scaled_h = max(1, int(self.base_height * scale))
-        scaled = pygame.transform.smoothscale(virtual, (scaled_w, scaled_h))
-
-        # Letterbox / center
-        offset_x = (sw - scaled_w) // 2
-        offset_y = (sh - scaled_h) // 2
-        game.screen.fill((0, 0, 0))
+        # Always stretch to fill the whole window (content may be slightly distorted on non-16:9 windows, but always uses 100% of the window area).
+        scaled = pygame.transform.smoothscale(virtual, (sw, sh))
 
         # Minimal colorblind accessibility stub (user decision + PR12 scope).
         # Very cheap: optional desaturate or simple shift. Controlled by game.colorblind_mode or similar.
         filtered = self._apply_minimal_colorblind_filter(game, scaled)
-        game.screen.blit(filtered, (offset_x, offset_y))
+        game.screen.fill((0, 0, 0))  # still clear in case of prior direct draws
+        game.screen.blit(filtered, (0, 0))
         pygame.display.flip()
 
     def render_shadowed_text(self, text, color, font):
@@ -959,7 +952,7 @@ class Renderer:
             self.draw_boss_health_to_surface(game, surface)
             self.draw_hud_to_surface(game, surface)
 
-            # Expanded mission panel (toggle with TAB) - drawn on virtual for proper scaling/letterbox
+            # Expanded mission panel (toggle with TAB) - drawn on virtual (content will be stretched to fill the whole window)
             if getattr(game, 'show_mission_panel', False):
                 self.draw_expanded_mission_panel(game, surface)
 
@@ -1208,8 +1201,9 @@ class Renderer:
                     card_color = (80, 30, 30, 220)
                     border_color = (150, 50, 50)
 
-                # Claimed dim for non-chosen post-boss cards
-                if is_post and has_claimed and not (item.get('name') == (shop_items[game.selected_item].get('name') if shop_items and game.selected_item < len(shop_items) else None) or item.get('skip')):
+                # Claimed dim for non-chosen post-boss cards (by claimed_item_name, not selected index)
+                claimed_name = getattr(current_state, 'claimed_item_name', None) if is_post else None
+                if is_post and has_claimed and not item.get('skip') and item.get('name') != claimed_name:
                     card_color = tuple(int(c * 0.55) if isinstance(c, int) else c for c in card_color[:3]) + (card_color[3] if len(card_color) > 3 else 200,)
 
                 card_surf = pygame.Surface((item_width, item_height), pygame.SRCALPHA)
@@ -1319,8 +1313,11 @@ class Renderer:
             rerolls = getattr(game.state, 'rerolls_remaining', 0)
             if claimed:
                 nav_text = self.render_shadowed_text("ESC or START: Continue to next level  •  Reward claimed", GOLD, game.tiny_font)
+            elif rerolls > 0:
+                nav = f"WASD/Arrows: Pick  •  ENTER/A: Claim  •  R: free reroll ({rerolls} left)  •  SKIP/ESC: +coins & continue"
+                nav_text = self.render_shadowed_text(nav, GOLD, game.tiny_font)
             else:
-                nav = f"↑↓←→/WASD: Pick  •  ENTER/A: Claim  •  R: Reroll ({rerolls} left)  •  SKIP card or ESC: +coins & continue"
+                nav = "WASD/Arrows: Pick  •  ENTER/A: Claim  •  R: paid reroll (50)  •  SKIP/ESC: +coins & continue"
                 nav_text = self.render_shadowed_text(nav, GOLD, game.tiny_font)
         else:
             nav_text = self.render_shadowed_text("Q/E or LB/RB: Switch categories • ↑↓←→ or WASD: Navigate • R: Reroll featured (150💰) • ENTER or A: Purchase • ESC: Back", WHITE, game.tiny_font)
