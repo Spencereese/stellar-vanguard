@@ -455,8 +455,10 @@ class Renderer:
                     # Border
                     pygame.draw.rect(surface, WHITE, (bar_x, bar_y, bar_width, bar_height), 2)
 
-                    # Boss name and health text
-                    boss_text = f"BOSS - {int(e.health)}/{int(e.max_health)}"
+                    # Boss name and health text (R3: show phase)
+                    phase = getattr(e, "phase", getattr(game, "boss_phase", 1))
+                    wind = " [CHARGING!]" if getattr(e, "is_winding_up", False) else ""
+                    boss_text = f"BOSS P{phase}{wind} - {int(e.health)}/{int(e.max_health)}"
                     # Render boss text scaled: render then scale down/up to match UI scale
                     text_surf = self.render_shadowed_text(boss_text, WHITE, game.font)
                     if self.ui_scale != 1.0:
@@ -509,6 +511,16 @@ class Renderer:
         score_text = f"Score: {game.score:,}"
         score_surf = self.render_shadowed_text(score_text, WHITE, game.small_font)
         surface.blit(score_surf, (10, 10))
+
+        # R3: compact wave theme tag under score
+        try:
+            theme = getattr(game, "wave_theme_name", "") or ""
+            if theme:
+                wt = f"W{getattr(game, 'wave', 1)} {theme}"
+                wt_surf = self.render_shadowed_text(wt, CYAN, game.tiny_font)
+                surface.blit(wt_surf, (10, 28))
+        except Exception:
+            pass
 
         # Combo display
         if game.combo > 1:
@@ -607,6 +619,33 @@ class Renderer:
         lives_x = bar_x + bar_width + 10
         lives_y = bar_y - 25
         surface.blit(lives_surf, (lives_x, lives_y))
+
+        # R3: centered wave theme banner (short-lived)
+        try:
+            timer = int(getattr(game, "wave_banner_timer", 0) or 0)
+            name = getattr(game, "wave_theme_name", "") or ""
+            if timer > 0 and name:
+                alpha = 255 if timer > 40 else max(40, int(255 * (timer / 40.0)))
+                title = f"WAVE {getattr(game, 'wave', 1)}"
+                sub = name
+                title_s = self.render_shadowed_text(title, GOLD, game.font)
+                sub_s = self.render_shadowed_text(sub, CYAN, game.small_font)
+                # fade via temp surfaces
+                for surf_txt, yoff in ((title_s, -18), (sub_s, 16)):
+                    tmp = pygame.Surface(surf_txt.get_size(), pygame.SRCALPHA)
+                    tmp.blit(surf_txt, (0, 0))
+                    tmp.set_alpha(alpha)
+                    surface.blit(tmp, (vw // 2 - tmp.get_width() // 2, vh // 2 + yoff - 40))
+            # Boss phase announce
+            btimer = int(getattr(game, "boss_phase_announce_timer", 0) or 0)
+            if btimer > 0 and getattr(game, "boss_spawned", False):
+                phase = getattr(game, "boss_phase", 1)
+                msg = f"BOSS PHASE {phase}"
+                ms = self.render_shadowed_text(msg, RED if phase >= 3 else YELLOW, game.font)
+                surface.blit(ms, (vw // 2 - ms.get_width() // 2, 55))
+        except Exception:
+            pass
+
 
     def draw_expanded_mission_panel(self, game, surface):
         """Full featured expandable mission / objectives panel.

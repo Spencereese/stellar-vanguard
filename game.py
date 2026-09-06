@@ -254,6 +254,13 @@ class Game:
         self.level = 1
         self.enemies_killed_this_level = 0
         self.boss_wave = 0
+        # R3 wave theme HUD fields (session owns the picker)
+        self.wave_theme_name = ''
+        self.wave_theme_id = None
+        self.wave_banner_timer = 0
+        self.boss_phase = 1
+        self.boss_phase_announce_timer = 0
+        self._survival_theme_clock = 0
         # Create player
         self.player = Player(self)
         self.all_sprites.add(self.player)
@@ -447,6 +454,12 @@ class Game:
         self.wave = 1
         self.boss_wave = 0
         self.enemies_killed_this_level = 0
+        self.wave_theme_name = ''
+        self.wave_theme_id = None
+        self.wave_banner_timer = 0
+        self.boss_phase = 1
+        self.boss_phase_announce_timer = 0
+        self._survival_theme_clock = 0
         # Reset achievements
         self.achievements = {
             'kill_100': False,
@@ -593,6 +606,33 @@ class Game:
 
         if self.game_mode != MODE_CAMPAIGN and not self.survival and self.score >= self.wave * 500:
             self.wave += 1
+            # R3: refresh themed composition + banner
+            if self.session and hasattr(self.session, 'advance_wave'):
+                try:
+                    self.session.advance_wave(self.wave)
+                except Exception:
+                    pass
+            elif self.session and hasattr(self.session, '_init_wave_theme'):
+                self.session.wave = self.wave
+                try:
+                    self.session._init_wave_theme(self.wave)
+                except Exception:
+                    pass
+
+        # R3 Survival: advance themed waves on a timer (no bosses; still get variety)
+        if self.survival:
+            self._survival_theme_clock = getattr(self, '_survival_theme_clock', 0) + 1
+            if self._survival_theme_clock >= 45 * 60:  # ~45s
+                self._survival_theme_clock = 0
+                self.wave = int(getattr(self, 'wave', 1) or 1) + 1
+                if self.session and hasattr(self.session, 'advance_wave'):
+                    try:
+                        self.session.advance_wave(self.wave)
+                    except Exception:
+                        pass
+
+        if getattr(self, 'boss_phase_announce_timer', 0) > 0:
+            self.boss_phase_announce_timer -= 1
 
         # Mission / objective tracking (supports visible missions HUD + boss approach bar)
         if self.game_mode == MODE_CAMPAIGN:

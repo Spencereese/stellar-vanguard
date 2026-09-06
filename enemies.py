@@ -511,6 +511,11 @@ class Boss(pygame.sprite.Sprite):
         self.return_to_right = False
         self.is_boss = True  # Mark as boss so bombs don't damage it
         self.defeated = False  # Track if boss was properly defeated
+        # R3 boss depth: telegraph wind-up before charge + phase announce
+        self.is_winding_up = False
+        self.windup_timer = 0
+        self.phase_announce_timer = 0
+        self._last_announced_phase = 1
 
     def _update_animation(self):
         """Advance animation phase for boss visuals (guns sweep, core pulse, charge glow)."""
@@ -544,7 +549,7 @@ class Boss(pygame.sprite.Sprite):
             self._refresh_animated_image()
 
         # Boss stays on the right side unless charging
-        if not self.is_charging and not self.return_to_right:
+        if not self.is_charging and not self.return_to_right and not getattr(self, 'is_winding_up', False):
             # Keep boss on the right side of screen
             target_x = SCREEN_WIDTH - 100
             if self.rect.centerx > target_x:
@@ -571,38 +576,56 @@ class Boss(pygame.sprite.Sprite):
         if self.rect.top < 0 or self.rect.bottom > SCREEN_HEIGHT:
             self.direction *= -1
 
-        # Phase changes
+        # Phase changes (R3: announce + FX on enter)
         if self.health <= self.max_health * 0.6 and self.phase == 1:
             self.phase = 2
             self.speed = 2
             self.shoot_timer = 0
+            self._announce_phase(2)
         elif self.health <= self.max_health * 0.3 and self.phase == 2:
             self.phase = 3
             self.speed = 3
             self.shoot_timer = 0
+            self._announce_phase(3)
+        if self.phase_announce_timer > 0:
+            self.phase_announce_timer -= 1
+
+        # R3: charge wind-up telegraph (warn then rush)
+        if self.is_winding_up:
+            self.windup_timer -= 1
+            if self.windup_timer % 4 == 0:
+                try:
+                    for _ in range(2):
+                        p = Particle(self.rect.centerx + random.randint(-20, 20),
+                                     self.rect.centery + random.randint(-20, 20),
+                                     (255, 160, 40), 'spark')
+                        self.game.particles.append(p)
+                except Exception:
+                    pass
+            if self.windup_timer <= 0:
+                self.is_winding_up = False
+                self.is_charging = True
+                self.charge_timer = 100
+                try:
+                    for _ in range(18):
+                        p = Particle(self.rect.centerx, self.rect.centery, RED, 'explosion')
+                        self.game.particles.append(p)
+                except Exception:
+                    pass
+
         self.shoot_timer += 1
         self.special_timer += 1
 
-        # Regular shooting
+        # Regular shooting — phase-specific patterns (R3 depth)
         shoot_interval = 120 - (self.phase - 1) * 30  # Phase 1: 120, 2: 90, 3: 60
-        if self.shoot_timer > shoot_interval:
-            enemy_bullet = Bullet(self.rect.left, self.rect.centery, 180, is_enemy=True, game=self.game)
-            self.game.all_sprites.add(enemy_bullet)
-            self.game.enemy_bullets.add(enemy_bullet)
-            if self.phase >= 2:
-                enemy_bullet2 = Bullet(self.rect.left, self.rect.centery - 20, 180, is_enemy=True, game=self.game)
-                self.game.all_sprites.add(enemy_bullet2)
-                self.game.enemy_bullets.add(enemy_bullet2)
-            if self.phase == 3:
-                enemy_bullet3 = Bullet(self.rect.left, self.rect.centery + 20, 180, is_enemy=True, game=self.game)
-                self.game.all_sprites.add(enemy_bullet3)
-                self.game.enemy_bullets.add(enemy_bullet3)
+        if self.shoot_timer > shoot_interval and not self.is_winding_up and not self.is_charging:
+            self._fire_phase_volley()
             self.shoot_timer = 0
 
         # Special attack: Spawn minions or charge attack
         special_interval = 300 - (self.phase - 1) * 60  # Phase 1: 300, 2: 240, 3: 180
-        if self.special_timer > special_interval:
-            if self.phase >= 2 and random.random() < 0.5:  # 50% chance for charge in phase 2+
+        if self.special_timer > special_interval and not self.is_winding_up and not self.is_charging:
+            if self.phase >= 2 and random.random() < 0.55:
                 self.charge_attack()
             else:
                 self.special_attack()
@@ -655,28 +678,85 @@ class Boss(pygame.sprite.Sprite):
             self.game.enemies.add(teleporter)
             self.game.all_sprites.add(teleporter)
         else:
-            # Phase 3: Spawn swarmers and screen-wide attack
-            for i in range(4):
+            # Phase 3: Swarmers + cloaker/splitter (existing types) + denser barrage
+            for i in range(3):
                 swarmer = Swarmer(self.game)
                 swarmer.rect.x = self.rect.centerx + random.randint(-150, 150)
                 swarmer.rect.y = self.rect.centery + random.randint(-100, 100)
                 self.game.enemies.add(swarmer)
                 self.game.all_sprites.add(swarmer)
-            
-            # Screen-wide bullet barrage
-            for y in range(50, SCREEN_HEIGHT, 60):
+            # Reuse registry enemies when available (no new content)
+            try:
+                from registries import create_enemy_from_registry, ENEMY_REGISTRY
+                for etype in ("cloaker", "splitter"):
+                    if etype in ENEMY_REGISTRY:
+                        e = create_enemy_from_registry(self.game, etype)
+                        if e is not None:
+                            e.rect.x = self.rect.centerx + random.randint(-120, 120)
+                            e.rect.y = self.rect.centery + random.randint(-80, 80)
+                            self.game.enemies.add(e)
+                            self.game.all_sprites.add(e)
+            except Exception:
+                pass
+            # Screen-wide bullet barrage (tighter spacing in phase 3)
+            for y in range(40, SCREEN_HEIGHT, 45):
                 enemy_bullet = Bullet(self.rect.left, y, 180, is_enemy=True, game=self.game)
                 self.game.all_sprites.add(enemy_bullet)
                 self.game.enemy_bullets.add(enemy_bullet)
-    
+
+    def _announce_phase(self, phase):
+        """R3: brief phase telegraph FX + HUD timer."""
+        self.phase_announce_timer = 90
+        self._last_announced_phase = phase
+        try:
+            self.game.boss_phase = phase
+            self.game.boss_phase_announce_timer = 90
+        except Exception:
+            pass
+        try:
+            col = (255, 200, 80) if phase == 2 else (255, 80, 80)
+            for _ in range(30):
+                p = Particle(self.rect.centerx + random.randint(-40, 40),
+                             self.rect.centery + random.randint(-40, 40), col, 'explosion')
+                self.game.particles.append(p)
+        except Exception:
+            pass
+
+    def _fire_phase_volley(self):
+        """R3: distinct shot patterns per phase."""
+        cy = self.rect.centery
+        lx = self.rect.left
+        def _add(y, angle=180):
+            b = Bullet(lx, y, angle, is_enemy=True, game=self.game)
+            self.game.all_sprites.add(b)
+            self.game.enemy_bullets.add(b)
+        if self.phase == 1:
+            _add(cy)
+            _add(cy - 18, 170)
+            _add(cy + 18, 190)
+        elif self.phase == 2:
+            _add(cy)
+            _add(cy - 22)
+            _add(cy + 22)
+            _add(cy - 40, 165)
+            _add(cy + 40, 195)
+        else:
+            # Phase 3 fan / near-spiral burst
+            for i, ang in enumerate((180, 165, 195, 150, 210, 140, 220)):
+                _add(cy + (i - 3) * 10, ang)
+
     def charge_attack(self):
-        """Boss charge attack - rushes toward player then returns"""
-        self.is_charging = True
-        self.charge_timer = 120  # 2 seconds of charging
-        # Visual effect for charge start
-        for _ in range(15):
-            p = Particle(self.rect.centerx, self.rect.centery, RED, 'explosion')
-            self.game.particles.append(p)
+        """Boss charge attack - R3 wind-up telegraph then rush."""
+        if self.is_charging or self.is_winding_up or self.return_to_right:
+            return
+        self.is_winding_up = True
+        self.windup_timer = 45  # ~0.75s telegraph before rush
+        try:
+            for _ in range(12):
+                p = Particle(self.rect.centerx, self.rect.centery, (255, 180, 60), 'spark')
+                self.game.particles.append(p)
+        except Exception:
+            pass
 
 class Swarmer(Enemy):
     """Fast, small enemy that moves in patterns"""

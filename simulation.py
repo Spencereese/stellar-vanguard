@@ -87,6 +87,12 @@ class SimulationWorld:
         self.enemies_killed_this_wave = 0   # for level/campaign objectives
         self.score = 0                      # sim can own or mirror; keep in sync with game for now
         self.coins_earned_this_run = 0
+        # R3: themed wave variety
+        self.wave_theme = None
+        self.wave_theme_id = None
+        self.wave_theme_name = ''
+        self.wave_banner_timer = 0
+        self._init_wave_theme(1)
 
         # Player (set after creation; sim drives most of its interactions)
         self.player = None
@@ -167,6 +173,12 @@ class SimulationWorld:
         self.freeze_timer = 0
         self.wave = kwargs.get('wave', 1)
         self.boss_spawned = False
+        self.enemies_killed_this_wave = 0
+        self.wave_theme = None
+        self.wave_theme_id = None
+        self.wave_theme_name = ''
+        self.wave_banner_timer = 0
+        self._init_wave_theme(self.wave)
         self.enemies_killed_this_wave = 0
         self.score = kwargs.get('score', 0)
         self.coins_earned_this_run = 0
@@ -305,8 +317,19 @@ class SimulationWorld:
             self.enemy_timer += 1
             spawn_rate = 90
             if self.enemy_timer > spawn_rate:
-                boss_enemy_types = ['tank', 'shooter', 'bomber']
-                enemy_type = random.choice(boss_enemy_types)
+                phase = 1
+                try:
+                    for e in list(self.enemies):
+                        if getattr(e, 'is_boss', False):
+                            phase = getattr(e, 'phase', 1)
+                            break
+                except Exception:
+                    phase = 1
+                try:
+                    from wave_themes import boss_minion_type
+                    enemy_type = boss_minion_type(self.wave_theme, phase)
+                except Exception:
+                    enemy_type = random.choice(['tank', 'shooter', 'bomber'])
                 enemy = self.spawn_enemy(enemy_type)
                 if enemy:
                     for _ in range(10):
@@ -351,19 +374,24 @@ class SimulationWorld:
                 self.game.boss_wave = self.wave
 
     def spawn_enemy(self, enemy_type=None):
-        """Factory using registries if available, else direct. Creative: supports new types from registries.py."""
+        """Factory using registries if available, else direct. Creative: supports new types from registries.py.
+        R3: when enemy_type is None, bias toward active wave theme pool (existing enemies only).
+        """
         if enemy_type is None:
             try:
                 from enemies import enemy_pools
                 pool = enemy_pools.get(min(self.wave, 10), enemy_pools[10])
-                # Mix in registered new types
                 try:
                     from registries import get_enhanced_enemy_pool
                     pool = pool + get_enhanced_enemy_pool(self.wave)
-                except:
+                except Exception:
                     pass
-                enemy_type = random.choice(pool)
-            except:
+                try:
+                    from wave_themes import resolve_enemy_type
+                    enemy_type = resolve_enemy_type(self.wave_theme, self.wave, fallback_pool=pool)
+                except Exception:
+                    enemy_type = random.choice(pool)
+            except Exception:
                 enemy_type = 'normal'
         try:
             from registries import ENEMY_REGISTRY, create_enemy_from_registry
@@ -765,6 +793,46 @@ class SimulationWorld:
         if getattr(self.game, 'powerup_sound', None):
             self.game.powerup_sound.play()
 
+
+    def _init_wave_theme(self, wave=None):
+        """R3: assign a themed composition for the current wave and sync HUD fields on game."""
+        w = int(wave if wave is not None else getattr(self, "wave", 1) or 1)
+        try:
+            from wave_themes import pick_wave_theme
+            theme = pick_wave_theme(w, previous_id=getattr(self, "wave_theme_id", None))
+        except Exception:
+            theme = {"id": "mixed", "name": "MIXED PATROL", "pool": None, "boss_minions": ["tank", "shooter", "bomber"]}
+        self.wave_theme = theme
+        self.wave_theme_id = theme.get("id")
+        self.wave_theme_name = theme.get("name", "WAVE")
+        self.wave_banner_timer = 150  # ~2.5s at 60fps
+        g = self.game
+        if g is not None:
+            g.wave_theme_name = self.wave_theme_name
+            g.wave_theme_id = self.wave_theme_id
+            g.wave_banner_timer = self.wave_banner_timer
+            if hasattr(g, "wave"):
+                try:
+                    g.wave = max(int(getattr(g, "wave", 1) or 1), w)
+                except Exception:
+                    pass
+
+    def advance_wave(self, new_wave=None):
+        """R3: bump wave + refresh theme/banner. Called from Game progression."""
+        if new_wave is None:
+            self.wave = int(getattr(self, "wave", 1) or 1) + 1
+        else:
+            self.wave = int(new_wave)
+        self.enemies_killed_this_wave = 0
+        self._init_wave_theme(self.wave)
+        return self.wave
+
+    def tick_wave_banner(self):
+        if getattr(self, "wave_banner_timer", 0) > 0:
+            self.wave_banner_timer -= 1
+            if self.game is not None and hasattr(self.game, "wave_banner_timer"):
+                self.game.wave_banner_timer = self.wave_banner_timer
+
     def _update_progression(self):
         """Wave increment, boss checks, campaign level complete conditions.
         Originally mixed in game.update_game_logic and level_manager.
@@ -774,6 +842,7 @@ class SimulationWorld:
 
     def _update_effects(self):
         """Slow, freeze, screen shake hooks, etc. + theme hazards (PR9: nebula slow, crystal reflect stub)."""
+        self.tick_wave_banner()
         # nebula hazard: slow all
         theme = getattr(getattr(self.game, 'level_manager', None), 'level_theme', '') or ''
         if 'nebula' in theme.lower() or 'void' in theme.lower():

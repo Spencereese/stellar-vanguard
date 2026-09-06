@@ -332,6 +332,34 @@ def test_sequel_features():
         print("✓ Skip path: +50 coins and proceeds (no claim state needed)")
         print("✓ Full post-boss modern shop logic+UX (rarity, synergy curation, free reroll S-rank, diversity, skip agency, claim-1, dynamic preview, Victory flow)")
 
+        # === R3: themed wave variety + boss phase depth ===
+        from wave_themes import pick_wave_theme, resolve_enemy_type, WAVE_THEMES, boss_minion_type
+        assert len(WAVE_THEMES) >= 5
+        t1 = pick_wave_theme(1)
+        assert t1 and t1.get("name")
+        t4 = pick_wave_theme(4, previous_id=t1.get("id"))
+        assert t4.get("id")  # ghost unlocks at 4
+        et = resolve_enemy_type(t1, 1, fallback_pool=["normal", "fast"])
+        assert isinstance(et, str) and len(et) > 0
+        assert boss_minion_type(t1, 2)
+        # Session wires theme on init
+        g_r3 = Game()
+        assert g_r3.session is not None
+        assert getattr(g_r3.session, "wave_theme_name", "") or getattr(g_r3, "wave_theme_name", "")
+        w_before = g_r3.session.wave
+        g_r3.session.advance_wave()
+        assert g_r3.session.wave == w_before + 1
+        assert g_r3.session.wave_banner_timer > 0
+        # Boss depth: wind-up + phase helpers exist
+        from enemies import Boss
+        b = Boss(g_r3)
+        assert hasattr(b, "is_winding_up") and hasattr(b, "_fire_phase_volley") and hasattr(b, "_announce_phase")
+        b.phase = 2
+        b.charge_attack()
+        assert b.is_winding_up and b.windup_timer > 0
+        assert not b.is_charging  # telegraph first
+        print("OK R3 wave themes + boss windup/phase depth")
+
         # loadout select state stub
         from game_states import LoadoutSelectState
         los = LoadoutSelectState(g)
