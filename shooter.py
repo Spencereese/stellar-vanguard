@@ -21,7 +21,7 @@ from game import Game
 
 # Set up display
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Space Shooter: Stellar Vanguard (v3.3)")
+pygame.display.set_caption("Space Shooter: Stellar Vanguard (v3.4)")
 clock = pygame.time.Clock()
 
 # Load high scores via PR3 persistence (deduped, evolvable)

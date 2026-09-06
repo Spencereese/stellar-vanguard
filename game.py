@@ -62,7 +62,7 @@ class Game:
             SCREEN_HEIGHT = self.window_height
             display_flags = 0
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), display_flags)
-        pygame.display.set_caption("Space Shooter: Stellar Vanguard (v3.3)")
+        pygame.display.set_caption("Space Shooter: Stellar Vanguard (v3.4)")
         self.clock = pygame.time.Clock()
         self.fullscreen = want_full  # for toggle and HUD if wanted
         # Sync global screen size so enemy spawn (enemies.py), bullets etc use full res not stale 800
@@ -336,6 +336,10 @@ class Game:
         self.preserve_run = False
         self._survival_milestones_hit = set()
         self.survival_milestone_interval = 60  # seconds between mid-run shops
+        # R7: Survival pressure / difficulty ramp (time-based, not wall-clock)
+        self.survival_pressure = 1.0
+        self.survival_threat_tier = 0
+        self.survival_threat_label = 'CALM'
         try:
             sb = pers.load_survival_best()
             self.best_survival_time = float(sb.get('best_time', 0) or 0)
@@ -479,6 +483,56 @@ class Game:
         self._recreate_display()
         print(f"[Stellar Vanguard] Fullscreen: {self.fullscreen} @ {SCREEN_WIDTH}x{SCREEN_HEIGHT}")
 
+
+    # --- R7 Survival depth: time-based pressure ramp + milestone enrichment ---
+    @staticmethod
+    def compute_survival_pressure(survival_time):
+        """Escalate pressure from survival_time (seconds). Tier every 60s past open."""
+        try:
+            t = max(0.0, float(survival_time or 0.0))
+        except Exception:
+            t = 0.0
+        # +0.18 per minute, soft cap ~2.5 at ~8+ minutes
+        pressure = 1.0 + (t / 60.0) * 0.18
+        return float(min(2.5, max(1.0, pressure)))
+
+    @staticmethod
+    def survival_threat_meta(survival_time):
+        """Return (tier_index, short_label) for HUD / banners."""
+        try:
+            t = max(0.0, float(survival_time or 0.0))
+        except Exception:
+            t = 0.0
+        tier = int(t // 60)  # 0=<1m, 1=1m+, 2=2m+, ...
+        labels = (
+            'CALM', 'RISING', 'HOSTILE', 'SEVERE', 'CRITICAL',
+            'OVERWHELMING', 'APOCALYPSE', 'LEGENDARY'
+        )
+        label = labels[min(tier, len(labels) - 1)]
+        return tier, label
+
+    def refresh_survival_pressure(self):
+        """Sync pressure + threat label from current survival_time."""
+        st = float(getattr(self, 'survival_time', 0.0) or 0.0)
+        self.survival_pressure = self.compute_survival_pressure(st)
+        tier, label = self.survival_threat_meta(st)
+        self.survival_threat_tier = tier
+        self.survival_threat_label = label
+        return self.survival_pressure
+
+    def survival_spawn_interval_frames(self):
+        """Frames between Survival spawns; tightens with survival_time (not wall clock)."""
+        st = float(getattr(self, 'survival_time', 0.0) or 0.0)
+        # Base 45 frames (~0.75s); -3 per 30s survived; floor 8
+        rate = 45 - int(st // 30) * 3
+        # Mild settings nudge
+        diff = getattr(self, 'difficulty', 'normal')
+        if diff == 'easy':
+            rate += 6
+        elif diff == 'hard':
+            rate -= 4
+        return max(8, int(rate))
+
     def apply_difficulty(self):
         if self.difficulty == 'easy':
             self.enemy_speed = 2
@@ -552,6 +606,9 @@ class Game:
         self.preserve_run = False
         self._survival_milestones_hit = set()
         self.survival_time = 0.0
+        self.survival_pressure = 1.0
+        self.survival_threat_tier = 0
+        self.survival_threat_label = 'CALM'
         self.freeze_timer = 0
         self.bg_x = 0
         self.wave = 1
@@ -743,6 +800,11 @@ class Game:
             if not hasattr(self, 'survival_time') or self.survival_time is None:
                 self.survival_time = 0.0
             self.survival_time = float(self.survival_time) + (1.0 / 60.0)
+            # R7: keep pressure/threat in sync with the Survival clock
+            try:
+                self.refresh_survival_pressure()
+            except Exception:
+                self.survival_pressure = self.compute_survival_pressure(self.survival_time)
             # 5-min achievement
             if self.survival_time >= 300 and not self.achievements.get('survive_5_min', False):
                 self.achievements['survive_5_min'] = True
@@ -755,11 +817,23 @@ class Game:
             milestone = int(self.survival_time // interval) * interval
             if milestone >= interval and milestone not in hit:
                 hit.add(milestone)
-                stipend = 40 + (milestone // interval) * 20
+                step = milestone // interval  # 1 at 60s, 2 at 120s, ...
+                stipend = 40 + step * 20
+                # R7: mid-run milestones past 60s get escalating score juice + threat callout
+                score_bonus = 0
+                if milestone > interval:
+                    score_bonus = 75 + (step - 1) * 50
+                    self.score = int(getattr(self, 'score', 0)) + int(score_bonus * getattr(self, 'exp_multiplier', 1.0))
                 self.coins = int(getattr(self, 'coins', 0)) + int(stipend * getattr(self, 'coin_multiplier', 1.0))
                 self.just_survival_milestone = True
                 self.preserve_run = True
                 self.survival_milestone_label = f"{milestone // 60}m" if milestone % 60 == 0 else f"{milestone}s"
+                # Banner reflects threat tier for late-run milestones
+                tier, tlabel = self.survival_threat_meta(milestone)
+                self.survival_threat_tier = tier
+                self.survival_threat_label = tlabel
+                if milestone > interval:
+                    self.wave_theme_name = f"THREAT {tlabel} +{score_bonus}pts"
                 self.wave_banner_timer = 90
                 try:
                     self.change_state(ShopState(self))

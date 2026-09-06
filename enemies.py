@@ -285,6 +285,12 @@ class Enemy(pygame.sprite.Sprite):
         if self.type != 'turret':
             self.health = int(self.health * (1 + (self.game.wave - 1) * 0.1))
             self.speed *= (1 + (self.game.wave - 1) * 0.05)
+        # R7 Survival depth: scale with time-based pressure (mid/late run)
+        if getattr(self.game, 'survival', False):
+            pressure = float(getattr(self.game, 'survival_pressure', 1.0) or 1.0)
+            if pressure > 1.0:
+                self.health = max(1, int(self.health * (0.85 + 0.15 * pressure)))
+                self.speed *= (0.92 + 0.08 * pressure)
         self.rect = self.image.get_rect()
         if self.type == 'turret':
             self.rect.x = SCREEN_WIDTH - 50

@@ -303,7 +303,12 @@ class SimulationWorld:
         if not self.boss_spawned:
             self.enemy_timer += 1
             if self.game.survival if hasattr(self.game, 'survival') else False:
-                spawn_rate = max(10, 45 - (pygame.time.get_ticks() // 30000))
+                # R7: difficulty ramp from Survival clock (not wall-clock ticks)
+                if hasattr(self.game, 'survival_spawn_interval_frames'):
+                    spawn_rate = int(self.game.survival_spawn_interval_frames())
+                else:
+                    st = float(getattr(self.game, 'survival_time', 0) or 0)
+                    spawn_rate = max(8, 45 - int(st // 30) * 3)
             else:
                 spawn_rate = max(20, 60 - self.wave * 5)
             if self.enemy_timer > spawn_rate:
@@ -337,8 +342,11 @@ class SimulationWorld:
                         self.particles.append(p)
                 self.enemy_timer = 0
 
-        # Asteroids
-        if not self.boss_spawned and random.random() < 0.02 + self.wave * 0.005:
+        # Asteroids (R7: Survival pressure nudges density past mid-run)
+        _ast_chance = 0.02 + self.wave * 0.005
+        if getattr(self.game, 'survival', False):
+            _ast_chance = 0.02 + float(getattr(self.game, 'survival_pressure', 1.0) or 1.0) * 0.012
+        if not self.boss_spawned and random.random() < _ast_chance:
             try:
                 ast = Asteroid(self.game)
                 self.all_sprites.add(ast)

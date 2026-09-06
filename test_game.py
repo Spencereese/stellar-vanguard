@@ -377,7 +377,7 @@ def test_sequel_features():
         print("OK R4 persistence survival bests coexist with highscores")
 
         from config import MODE_SURVIVAL, VERSION
-        assert VERSION.startswith('3.3')
+        assert VERSION.startswith('3.4')
         g_r4 = Game()
         g_r4.survival = True
         g_r4.game_mode = MODE_SURVIVAL
@@ -442,7 +442,7 @@ def test_sequel_features():
         print("OK R5 named highscore persistence + qualify gate")
 
         from config import VERSION as _ver_r5
-        assert _ver_r5.startswith('3.3')
+        assert _ver_r5.startswith('3.4')
         g5 = Game()
         g5.spawn_damage_number(100, 200, 42, crit=False)
         g5.spawn_damage_number(110, 210, 99, crit=True)
@@ -508,8 +508,57 @@ def test_sequel_features():
             assert g6.window_width == 960
             assert pers6.load_settings().get("window_width") == 960
             from config import VERSION as _ver_r6
-            assert _ver_r6.startswith("3.3")
+            assert _ver_r6.startswith("3.4")
             print("OK R6 window stretch toggle (960 default / 1280 optional)")
+
+            # === R7: Survival difficulty ramp + mid-run milestones past 60s ===
+            from config import MODE_SURVIVAL, VERSION as _ver_r7
+            assert _ver_r7.startswith("3.4")
+            g7 = Game()
+            g7.survival = True
+            g7.game_mode = MODE_SURVIVAL
+            g7.survival_time = 0.0
+            g7.refresh_survival_pressure()
+            assert abs(g7.survival_pressure - 1.0) < 1e-6
+            assert g7.survival_threat_label == "CALM"
+            assert g7.survival_spawn_interval_frames() >= 40
+            # 90s: mid-run pressure + tighter spawn
+            g7.survival_time = 90.0
+            g7.refresh_survival_pressure()
+            assert g7.survival_pressure > 1.0
+            assert g7.compute_survival_pressure(180.0) > g7.compute_survival_pressure(90.0)
+            assert g7.compute_survival_pressure(600.0) <= 2.5 + 1e-9
+            # spawn interval shrinks with time
+            g7.survival_time = 0.0
+            r0 = g7.survival_spawn_interval_frames()
+            g7.survival_time = 150.0
+            r1 = g7.survival_spawn_interval_frames()
+            assert r1 < r0, "spawn interval must tighten mid-run"
+            # Milestone enrichment past 60s: simulate 120s shop path body
+            g7.survival_time = 120.0
+            g7.score = 100
+            g7.coins = 10
+            g7._survival_milestones_hit = {60}
+            interval = int(getattr(g7, "survival_milestone_interval", 60) or 60)
+            milestone = int(g7.survival_time // interval) * interval
+            assert milestone == 120
+            step = milestone // interval
+            stipend = 40 + step * 20
+            score_bonus = 75 + (step - 1) * 50
+            g7.score = int(g7.score) + int(score_bonus)
+            g7.coins = int(g7.coins) + int(stipend)
+            tier, tlabel = g7.survival_threat_meta(milestone)
+            g7.survival_threat_tier = tier
+            g7.survival_threat_label = tlabel
+            assert score_bonus >= 75
+            assert stipend >= 80
+            assert tlabel in ("HOSTILE", "SEVERE", "CRITICAL", "RISING", "OVERWHELMING", "APOCALYPSE", "LEGENDARY")
+            if g7.session is not None:
+                g7.survival_time = 120.0
+                g7.refresh_survival_pressure()
+                expected = g7.survival_spawn_interval_frames()
+                assert expected < 45
+            print("OK R7 Survival difficulty ramp + mid-run milestone enrichment")
         finally:
             _pers_mod_r6._default_persistence = _prev_pers
         # loadout select state stub
@@ -927,7 +976,7 @@ def test_headless_verifier_env_destr_abilities_keys():
 
 def main():
     """Run all tests"""
-    print("🛸 Space Shooter: Stellar Vanguard v3.3 - Test Suite")
+    print("🛸 Space Shooter: Stellar Vanguard v3.4 - Test Suite")
     print("=" * 40)
 
     tests = [
@@ -950,7 +999,7 @@ def main():
     print(f"Test Results: {passed}/{total} tests passed")
 
     if passed == total:
-        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.3 is ready to launch!")
+        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.4 is ready to launch!")
         return 0
     else:
         print("❌ Some tests failed. Please check the errors above.")

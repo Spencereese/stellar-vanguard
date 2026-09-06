@@ -531,7 +531,9 @@ class Renderer:
                 interval = int(getattr(game, 'survival_milestone_interval', 60) or 60)
                 nxt = ((int(st) // interval) + 1) * interval
                 best_t = float(getattr(game, 'best_survival_time', 0) or 0)
-                timer_txt = f"SURVIVE {mins:02d}:{secs:02d}  next shop {nxt}s  best {int(best_t)}s"
+                threat = getattr(game, 'survival_threat_label', None) or 'CALM'
+                pressure = float(getattr(game, 'survival_pressure', 1.0) or 1.0)
+                timer_txt = f"SURVIVE {mins:02d}:{secs:02d}  next shop {nxt}s  {threat} x{pressure:.2f}  best {int(best_t)}s"
                 ts = self.render_shadowed_text(timer_txt, GOLD, game.tiny_font)
                 surface.blit(ts, (10, 42))
         except Exception:
