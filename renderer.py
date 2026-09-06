@@ -1195,16 +1195,16 @@ class Renderer:
                 col = GREEN if i == selected else WHITE
                 prefix = "> " if i == selected else "  "
                 txt = self.render_shadowed_text(f"{prefix}{label}", col, game.small_font)
-                surface.blit(txt, (sw//2 - txt.get_width()//2, int((220 + i * 40) * (sh / float(self.base_height)))))
+                surface.blit(txt, (sw//2 - txt.get_width()//2, int((200 + i * 34) * (sh / float(self.base_height)))))
             hints = [
-                "P / ESC / Enter — Resume",
-                "Arrows / WASD — Move",
-                "Q — Quit",
-                "Pad: A/Start resume, B quit",
+                "P / ESC - Resume   Enter - Select",
+                "Arrows / WASD - Move   L/R - Volume",
+                "M - Main Menu   Q - Quit Desktop",
+                "Pad: A select, Start resume, B menu",
             ]
             for i, h in enumerate(hints):
                 ht = self.render_shadowed_text(h, (180, 180, 200), game.small_font)
-                surface.blit(ht, (sw//2 - ht.get_width()//2, int((340 + i * 28) * (sh / float(self.base_height)))))
+                surface.blit(ht, (sw//2 - ht.get_width()//2, int((420 + i * 24) * (sh / float(self.base_height)))))
 
         self._render_virtual_and_blit(lambda g, s: _draw_pause_virtual(g, s, options, selected), game)
 

@@ -825,79 +825,200 @@ class PlayingState(GameState):
     def draw(self):
         self.game.renderer.draw_playing(self.game)
 
-# PauseMenuState (R5 a11y: keys match UI, nav + pad, dim overlay via renderer)
+# PauseMenuState (R5 a11y + R13 hub: audio / restart / main menu / quit)
 class PauseMenuState(GameState):
+    # Fixed action ids; labels for volume rows are refreshed live.
+    OPT_RESUME = 0
+    OPT_MUSIC = 1
+    OPT_SFX = 2
+    OPT_RESTART = 3
+    OPT_MENU = 4
+    OPT_QUIT = 5
+
     def __init__(self, game):
         super().__init__(game)
-        self.options = ["Resume", "Quit"]
         self.selected = 0
         self.last_nav_time = 0
+        self._refresh_options()
+
+    def _refresh_options(self):
+        mv = int(round(float(getattr(self.game, "music_volume", 0.5) or 0) * 100))
+        sv = int(round(float(getattr(self.game, "sfx_volume", 0.5) or 0) * 100))
+        self.options = [
+            "Resume",
+            f"Music Volume  {mv}%",
+            f"SFX Volume  {sv}%",
+            "Restart Run",
+            "Main Menu",
+            "Quit Desktop",
+        ]
 
     def enter(self):
         self.game.paused = True
+        self.selected = 0
+        self._refresh_options()
         try:
             self.game.pause_music()
         except Exception:
             pass
 
+    def _persist_volumes(self):
+        try:
+            from persistence import get_persistence
+            pers = get_persistence()
+            cur = pers.load_settings()
+            cur.update({
+                "music_volume": getattr(self.game, "music_volume", 0.5),
+                "sfx_volume": getattr(self.game, "sfx_volume", 0.5),
+            })
+            pers.save_settings(cur)
+        except Exception:
+            pass
+
+    def _adjust_volume(self, which, delta):
+        if which == "music":
+            self.game.music_volume = max(0.0, min(1.0, round(float(getattr(self.game, "music_volume", 0.5) or 0) + delta, 1)))
+            try:
+                pygame.mixer.music.set_volume(self.game.music_volume)
+            except Exception:
+                pass
+        else:
+            self.game.sfx_volume = max(0.0, min(1.0, round(float(getattr(self.game, "sfx_volume", 0.5) or 0) + delta, 1)))
+            try:
+                self.game.update_sound_volumes()
+            except Exception:
+                pass
+        self._persist_volumes()
+        self._refresh_options()
+
     def _resume(self):
         self.game.paused = False
+        # PlayingState.enter resets unless preserve_run / boss_spawned — keep the live run.
+        self.game.preserve_run = True
         try:
             self.game.resume_music()
         except Exception:
             pass
         self.game.change_state(PlayingState(self.game))
 
+    def _restart(self):
+        self.game.paused = False
+        self.game.continuing = False
+        self.game.boss_spawned = False
+        self.game.preserve_run = False
+        try:
+            self.game.just_defeated_boss = False
+            self.game.just_survival_milestone = False
+        except Exception:
+            pass
+        # PlayingState.enter will reset_game (boss_spawned False, not preserve)
+        self.game.change_state(PlayingState(self.game))
+
+    def _main_menu(self):
+        self.game.paused = False
+        try:
+            self.game.boss_spawned = False
+            self.game.preserve_run = False
+            self.game.continuing = False
+        except Exception:
+            pass
+        self.game.change_state(MenuState(self.game))
+
     def _quit(self):
         self.game.running = False
 
     def _activate(self):
-        if self.selected == 0:
+        sel = self.selected
+        if sel == self.OPT_RESUME:
             self._resume()
-        else:
+        elif sel == self.OPT_MUSIC:
+            self._adjust_volume("music", 0.1)
+        elif sel == self.OPT_SFX:
+            self._adjust_volume("sfx", 0.1)
+        elif sel == self.OPT_RESTART:
+            self._restart()
+        elif sel == self.OPT_MENU:
+            self._main_menu()
+        elif sel == self.OPT_QUIT:
             self._quit()
 
     def handle_event(self, event):
         now = pygame.time.get_ticks()
         if event.type == pygame.KEYDOWN:
-            # Always-resume keys (match on-screen hints)
-            if event.key in (pygame.K_p, pygame.K_ESCAPE, pygame.K_r, pygame.K_n):
+            # Always-resume (P/ESC) — R13 hub keeps these as quick unpause
+            if event.key in (pygame.K_p, pygame.K_ESCAPE):
                 self._resume()
                 return
             if event.key in (pygame.K_UP, pygame.K_w):
                 self.selected = (self.selected - 1) % len(self.options)
             elif event.key in (pygame.K_DOWN, pygame.K_s):
                 self.selected = (self.selected + 1) % len(self.options)
+            elif event.key in (pygame.K_LEFT, pygame.K_a):
+                if self.selected == self.OPT_MUSIC:
+                    self._adjust_volume("music", -0.1)
+                elif self.selected == self.OPT_SFX:
+                    self._adjust_volume("sfx", -0.1)
+            elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                if self.selected == self.OPT_MUSIC:
+                    self._adjust_volume("music", 0.1)
+                elif self.selected == self.OPT_SFX:
+                    self._adjust_volume("sfx", 0.1)
             elif event.key in (pygame.K_RETURN, pygame.K_SPACE):
                 self._activate()
             elif event.key == pygame.K_q:
                 self._quit()
+            elif event.key == pygame.K_m:
+                self._main_menu()
         elif event.type == pygame.JOYBUTTONDOWN:
-            if event.button in (0, 7):  # A or Start -> resume / activate
-                if event.button == 7:
-                    self._resume()
-                else:
-                    self._activate()
-            elif event.button == 1:  # B quit
-                self._quit()
+            if event.button == 7:  # Start -> resume
+                self._resume()
+            elif event.button == 0:  # A activate
+                self._activate()
+            elif event.button == 1:  # B -> Main Menu (safer than hard quit)
+                self._main_menu()
         elif event.type == pygame.JOYHATMOTION:
             hx, hy = event.value
-            if hy > 0 or hx < 0:
+            if hy > 0:
                 self.selected = (self.selected - 1) % len(self.options)
-            elif hy < 0 or hx > 0:
+            elif hy < 0:
                 self.selected = (self.selected + 1) % len(self.options)
-        elif event.type == pygame.JOYAXISMOTION and event.axis in (1,):
+            elif hx < 0:
+                if self.selected == self.OPT_MUSIC:
+                    self._adjust_volume("music", -0.1)
+                elif self.selected == self.OPT_SFX:
+                    self._adjust_volume("sfx", -0.1)
+            elif hx > 0:
+                if self.selected == self.OPT_MUSIC:
+                    self._adjust_volume("music", 0.1)
+                elif self.selected == self.OPT_SFX:
+                    self._adjust_volume("sfx", 0.1)
+        elif event.type == pygame.JOYAXISMOTION:
             if now - self.last_nav_time < 180:
                 return
-            if event.value < -0.5:
-                self.selected = (self.selected - 1) % len(self.options)
-                self.last_nav_time = now
-            elif event.value > 0.5:
-                self.selected = (self.selected + 1) % len(self.options)
-                self.last_nav_time = now
+            if event.axis == 1:
+                if event.value < -0.5:
+                    self.selected = (self.selected - 1) % len(self.options)
+                    self.last_nav_time = now
+                elif event.value > 0.5:
+                    self.selected = (self.selected + 1) % len(self.options)
+                    self.last_nav_time = now
+            elif event.axis == 0:
+                if event.value < -0.5:
+                    if self.selected == self.OPT_MUSIC:
+                        self._adjust_volume("music", -0.1)
+                    elif self.selected == self.OPT_SFX:
+                        self._adjust_volume("sfx", -0.1)
+                    self.last_nav_time = now
+                elif event.value > 0.5:
+                    if self.selected == self.OPT_MUSIC:
+                        self._adjust_volume("music", 0.1)
+                    elif self.selected == self.OPT_SFX:
+                        self._adjust_volume("sfx", 0.1)
+                    self.last_nav_time = now
 
     def draw(self):
-        self.game.renderer.draw_pause_menu(self.game, getattr(self, 'options', None), getattr(self, 'selected', 0))
+        self._refresh_options()
+        self.game.renderer.draw_pause_menu(self.game, getattr(self, "options", None), getattr(self, "selected", 0))
 
 # ContinuePromptState
 class ContinuePromptState(GameState):

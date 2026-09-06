@@ -454,10 +454,16 @@ def test_sequel_features():
         g5.paused = True
         pause = PauseMenuState(g5)
         pause.enter()
-        assert pause.options == ['Resume', 'Quit']
+        assert pause.options[0] == 'Resume'
+        assert any(o.startswith('Music Volume') for o in pause.options)
+        assert any(o.startswith('SFX Volume') for o in pause.options)
+        assert 'Restart Run' in pause.options
+        assert 'Main Menu' in pause.options
+        assert 'Quit Desktop' in pause.options
+        assert len(pause.options) == 6
         import pygame as _pg5
         pause.handle_event(type('E', (), {'type': _pg5.KEYDOWN, 'key': _pg5.K_DOWN, 'unicode': ''})())
-        assert pause.selected == 1
+        assert pause.selected == 1  # Music Volume
         pause.handle_event(type('E', (), {'type': _pg5.KEYDOWN, 'key': _pg5.K_p, 'unicode': ''})())
         assert g5.paused is False
         # name entry confirm writes initials
@@ -752,7 +758,7 @@ def test_sequel_features():
 
             # === R12: Shop featured purchasable deals row ===
             from config import VERSION as _ver_r12
-            assert _ver_r12.startswith("3.9")
+            assert _ver_r12.startswith("3.")
             from game_states import ShopState as _ShopR12
             import pygame as _pg_r12
             g12 = Game()
@@ -807,6 +813,64 @@ def test_sequel_features():
             print("OK R12 Shop featured purchasable deals (nav/buy/sold/reroll)")
         finally:
             _pers_mod_r6._default_persistence = _prev_pers
+
+        # === R13: Pause menu hub (audio / restart / main menu) ===
+        from config import VERSION as _ver_r13
+        assert _ver_r13.startswith("3.10")
+        from game_states import PauseMenuState as _PMS13, MenuState as _MS13, PlayingState as _PS13
+        import pygame as _pg_r13
+        g13 = Game()
+        g13.music_volume = 0.5
+        g13.sfx_volume = 0.5
+        g13.paused = True
+        g13.score = 1234
+        g13.continuing = True
+        g13.boss_spawned = True
+        pause13 = _PMS13(g13)
+        pause13.enter()
+        assert len(pause13.options) == 6
+        assert pause13.options[0] == "Resume"
+        assert pause13.OPT_MUSIC == 1 and pause13.OPT_SFX == 2
+        assert pause13.OPT_RESTART == 3 and pause13.OPT_MENU == 4 and pause13.OPT_QUIT == 5
+        # volume L/R adjust + label refresh
+        pause13.selected = pause13.OPT_MUSIC
+        pause13.handle_event(type("E", (), {"type": _pg_r13.KEYDOWN, "key": _pg_r13.K_RIGHT, "unicode": ""})())
+        assert abs(g13.music_volume - 0.6) < 1e-6
+        assert "60%" in pause13.options[pause13.OPT_MUSIC]
+        pause13.handle_event(type("E", (), {"type": _pg_r13.KEYDOWN, "key": _pg_r13.K_LEFT, "unicode": ""})())
+        assert abs(g13.music_volume - 0.5) < 1e-6
+        pause13.selected = pause13.OPT_SFX
+        pause13.handle_event(type("E", (), {"type": _pg_r13.KEYDOWN, "key": _pg_r13.K_RIGHT, "unicode": ""})())
+        assert abs(g13.sfx_volume - 0.6) < 1e-6
+        # Main Menu clears pause and switches state
+        pause13.selected = pause13.OPT_MENU
+        pause13.handle_event(type("E", (), {"type": _pg_r13.KEYDOWN, "key": _pg_r13.K_RETURN, "unicode": ""})())
+        assert g13.paused is False
+        assert isinstance(g13.state, _MS13)
+        # Restart Run clears continuing/boss and returns to Playing
+        g13b = Game()
+        g13b.paused = True
+        g13b.continuing = True
+        g13b.boss_spawned = True
+        g13b.score = 999
+        p13b = _PMS13(g13b)
+        p13b.enter()
+        p13b.selected = p13b.OPT_RESTART
+        p13b.handle_event(type("E", (), {"type": _pg_r13.KEYDOWN, "key": _pg_r13.K_RETURN, "unicode": ""})())
+        assert g13b.paused is False
+        assert g13b.continuing is False
+        assert g13b.boss_spawned is False
+        assert isinstance(g13b.state, _PS13)
+        # Quit Desktop
+        g13c = Game()
+        g13c.paused = True
+        g13c.running = True
+        p13c = _PMS13(g13c)
+        p13c.enter()
+        p13c.selected = p13c.OPT_QUIT
+        p13c.handle_event(type("E", (), {"type": _pg_r13.KEYDOWN, "key": _pg_r13.K_RETURN, "unicode": ""})())
+        assert g13c.running is False
+        print("OK R13 Pause menu hub (volume/restart/menu/quit)")
         # loadout select state (R9 polish)
         from game_states import LoadoutSelectState
         los = LoadoutSelectState(g)
@@ -1224,7 +1288,7 @@ def test_headless_verifier_env_destr_abilities_keys():
 
 def main():
     """Run all tests"""
-    print("🛸 Space Shooter: Stellar Vanguard v3.8 - Test Suite")
+    print("🛸 Space Shooter: Stellar Vanguard v3.10 - Test Suite")
     print("=" * 40)
 
     tests = [
@@ -1247,7 +1311,7 @@ def main():
     print(f"Test Results: {passed}/{total} tests passed")
 
     if passed == total:
-        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.8 is ready to launch!")
+        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.10 is ready to launch!")
         return 0
     else:
         print("❌ Some tests failed. Please check the errors above.")
