@@ -726,8 +726,36 @@ class Renderer:
         pct_txt = self.render_shadowed_text(f"{pct}%", (255, 255, 255), game.tiny_font)
         surface.blit(pct_txt, (bar_x + bar_w + 6, bar_y - 1))
 
+        # Secondary objective box (Campaign depth — optional bonus)
+        sec = mdata.get('secondary')
+        sec_h = 0
+        if sec:
+            sec_y = obj_y + 60
+            sec_h = 48
+            done = bool(sec.get('complete'))
+            border = (90, 210, 130) if done else (200, 160, 70)
+            pygame.draw.rect(surface, (28, 26, 18), (px + 16, sec_y, pw - 32, sec_h))
+            pygame.draw.rect(surface, border, (px + 16, sec_y, pw - 32, sec_h), 1)
+            tag = "COMPLETE" if done else "BONUS"
+            lab = sec.get('label', 'Secondary')
+            desc = sec.get('description', '')
+            head = self.render_shadowed_text(f"SECONDARY [{tag}]: {lab}", (255, 220, 140) if not done else (160, 255, 180), game.small_font)
+            surface.blit(head, (px + 26, sec_y + 6))
+            sp = max(0.0, min(1.0, float(sec.get('percent', 0.0))))
+            sbw = pw - 70
+            sbx = px + 35
+            sby = sec_y + 30
+            pygame.draw.rect(surface, (20, 25, 40), (sbx, sby, sbw, 10))
+            scol = (90, 210, 130) if done else (230, 180, 70)
+            if sp > 0:
+                pygame.draw.rect(surface, scol, (sbx, sby, int(sbw * sp), 10))
+            pygame.draw.rect(surface, (180, 160, 100), (sbx, sby, sbw, 10), 1)
+            bonus = sec.get('bonus_mult', 1.2)
+            hint = self.render_shadowed_text(f"{desc}  (+{int((bonus-1)*100)}% reward)", (200, 190, 150), game.tiny_font)
+            surface.blit(hint, (px + 26, sec_y + 18))
+
         # Trackers section
-        track_y = obj_y + 62
+        track_y = obj_y + 62 + sec_h
         trackers = mdata.get('trackers', []) or []
         title_tr = self.render_shadowed_text("PROGRESS TRACKERS", (140, 170, 210), game.tiny_font)
         surface.blit(title_tr, (px + 20, track_y))

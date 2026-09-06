@@ -79,7 +79,8 @@ class LevelManager:
         if level >= 10 and random.random() < 0.3:
             extra_specials.append(random.choice(['tank', 'shooter', 'bomber']))
         
-        return {
+        objective_type = self._get_random_objective(level)
+        data = {
             'enemy_count': enemy_count,
             'boss_required': boss_required,
             'spawn_rate': spawn_rate,
@@ -88,9 +89,11 @@ class LevelManager:
             'reward_multiplier': max(reward_mult, 0.5),
             'theme': self.level_theme,
             'special_enemies': special_enemies + extra_specials,
-            'objective_type': self._get_random_objective(level),
-            'enemy_composition': self._get_enemy_composition(level)
+            'objective_type': objective_type,
+            'enemy_composition': self._get_enemy_composition(level),
         }
+        data['secondary_objective'] = self._pick_secondary_objective(level, objective_type, data)
+        return data
 
     def _get_enemy_composition(self, level):
         """Get enemy type distribution for this level"""
@@ -146,6 +149,89 @@ class LevelManager:
             objectives.append('no_damage')
             
         return random.choice(objectives)
+
+    def _pick_secondary_objective(self, level, primary, data):
+        """Optional secondary objective for Campaign depth (bonus, not required to clear).
+        Avoids duplicating the primary type. Available from level 3+.
+        """
+        if level < 3:
+            return None
+        # Secondary catalog: type, label, target, bonus_mult
+        pool = []
+        if primary != 'no_damage':
+            pool.append({
+                'type': 'no_damage',
+                'label': 'Zero damage',
+                'target': 0,
+                'bonus_mult': 1.35,
+                'description': 'Take no damage this level',
+            })
+        if primary != 'collect_powerups':
+            tgt = 3 if level < 10 else 5
+            pool.append({
+                'type': 'collect_powerups',
+                'label': 'Salvage run',
+                'target': tgt,
+                'bonus_mult': 1.2,
+                'description': f'Collect {tgt} power-ups',
+            })
+        if primary != 'survive_time':
+            tgt = 45 if level < 8 else 60
+            pool.append({
+                'type': 'survive_time',
+                'label': 'Hold the line',
+                'target': tgt,
+                'bonus_mult': 1.25,
+                'description': f'Survive {tgt}s (bonus clock)',
+            })
+        # Extra kills always available as secondary (distinct from primary kill quota)
+        extra = max(3, data.get('enemy_count', 8) // 4)
+        pool.append({
+            'type': 'extra_kills',
+            'label': 'Overkill',
+            'target': data.get('enemy_count', 8) + extra,
+            'bonus_mult': 1.15,
+            'description': f'Eliminate {data.get("enemy_count", 8) + extra} hostiles',
+        })
+        # Style rank secondary from midgame
+        if level >= 6:
+            pool.append({
+                'type': 'style_rank',
+                'label': 'Stylish clear',
+                'target': 'B',
+                'bonus_mult': 1.3,
+                'description': 'Finish at style rank B or better',
+            })
+        if not pool:
+            return None
+        # ~70% chance to attach a secondary so early levels stay light
+        if random.random() > 0.85 and level < 5:
+            return None
+        return random.choice(pool)
+
+    def is_secondary_complete(self, sec=None):
+        """Whether the optional secondary objective is currently satisfied."""
+        if sec is None:
+            data = getattr(self, 'current_level_data', None) or {}
+            sec = data.get('secondary_objective')
+        if not sec:
+            return False
+        st = sec.get('type')
+        tgt = sec.get('target')
+        if st == 'no_damage':
+            return getattr(self.game, 'damage_taken_this_level', 0) == 0
+        if st == 'collect_powerups':
+            return getattr(self.game, 'powerups_collected_this_level', 0) >= int(tgt or 0)
+        if st == 'survive_time':
+            return int(getattr(self.game, 'survival_time', 0)) >= int(tgt or 0)
+        if st == 'extra_kills':
+            return getattr(self.game, 'enemies_killed_this_level', 0) >= int(tgt or 0)
+        if st == 'style_rank':
+            order = {'D': 0, 'C': 1, 'B': 2, 'A': 3, 'S': 4}
+            cur = getattr(self.game, 'style_rank', 'D')
+            need = str(tgt or 'B')
+            return order.get(cur, 0) >= order.get(need, 2)
+        return False
 
     def trigger_random_event(self):
         """Trigger a random level event"""
@@ -292,8 +378,13 @@ class LevelManager:
             powerups_collected = getattr(self.game, 'powerups_collected_this_level', 0)
             return powerups_collected >= 5
         elif objective == 'no_damage':
-            # Complete level without taking damage
-            return getattr(self.game, 'damage_taken_this_level', 0) == 0 and self.is_level_complete()  # Fallback to kill enemies
+            # Complete hostiles/boss without taking damage (NO recursion — prior call re-entered self)
+            dmg_ok = getattr(self.game, 'damage_taken_this_level', 0) == 0
+            if data.get('boss_required'):
+                clears = not any(isinstance(enemy, Boss) for enemy in getattr(self.game, 'enemies', []) or [])
+            else:
+                clears = getattr(self.game, 'enemies_killed_this_level', 0) >= data.get('enemy_count', 0)
+            return dmg_ok and clears
         
         return False
 
@@ -337,8 +428,14 @@ class LevelManager:
         damage_taken = getattr(self.game, 'damage_taken_this_level', 0)
         if damage_taken == 0:
             performance_bonus *= 1.25
+
+        # Optional secondary objective bonus (Campaign depth)
+        secondary_bonus = 1.0
+        sec = data.get('secondary_objective')
+        if sec and self.is_secondary_complete(sec):
+            secondary_bonus = float(sec.get('bonus_mult', 1.2))
             
-        return int(base_reward * multiplier * objective_bonus * performance_bonus)
+        return int(base_reward * multiplier * objective_bonus * performance_bonus * secondary_bonus)
 
     def next_level(self):
         """Advance to next level - now infinite"""
@@ -474,6 +571,42 @@ class LevelManager:
             'percent': {'S':1.0,'A':0.8,'B':0.6,'C':0.4,'D':0.2}.get(getattr(self.game, 'style_rank', 'D'), 0.2)
         })
 
+        sec = data.get('secondary_objective')
+        secondary = None
+        if sec:
+            st = sec.get('type')
+            cur_val = 0
+            tgt_val = sec.get('target', 0)
+            perc = 0.0
+            done = self.is_secondary_complete(sec)
+            if st == 'no_damage':
+                cur_val = getattr(self.game, 'damage_taken_this_level', 0)
+                perc = 1.0 if cur_val == 0 else 0.0
+            elif st == 'collect_powerups':
+                cur_val = getattr(self.game, 'powerups_collected_this_level', 0)
+                perc = min(1.0, cur_val / max(1, int(tgt_val or 1)))
+            elif st == 'survive_time':
+                cur_val = int(getattr(self.game, 'survival_time', 0))
+                perc = min(1.0, cur_val / max(1, int(tgt_val or 1)))
+            elif st == 'extra_kills':
+                cur_val = getattr(self.game, 'enemies_killed_this_level', 0)
+                perc = min(1.0, cur_val / max(1, int(tgt_val or 1)))
+            elif st == 'style_rank':
+                cur_val = getattr(self.game, 'style_rank', 'D')
+                order = {'D': 0.2, 'C': 0.4, 'B': 0.6, 'A': 0.8, 'S': 1.0}
+                perc = order.get(str(cur_val), 0.2)
+            secondary = {
+                'type': st,
+                'label': sec.get('label', 'Secondary'),
+                'description': sec.get('description', ''),
+                'current': cur_val,
+                'target': tgt_val,
+                'percent': perc,
+                'complete': done,
+                'bonus_mult': sec.get('bonus_mult', 1.2),
+                'invert': st == 'no_damage',
+            }
+
         return {
             'title': f"Level {self.current_level} - {data.get('theme', 'Space').title()}",
             'description': description,
@@ -481,6 +614,7 @@ class LevelManager:
             'trackers': trackers,
             'is_boss': is_boss,
             'objective_type': obj_type,
+            'secondary': secondary,
             'estimated_reward': self.get_level_reward()
         }
 

@@ -377,7 +377,7 @@ def test_sequel_features():
         print("OK R4 persistence survival bests coexist with highscores")
 
         from config import MODE_SURVIVAL, VERSION
-        assert VERSION.startswith('3.7')
+        assert VERSION.startswith('3.8')
         g_r4 = Game()
         g_r4.survival = True
         g_r4.game_mode = MODE_SURVIVAL
@@ -442,7 +442,7 @@ def test_sequel_features():
         print("OK R5 named highscore persistence + qualify gate")
 
         from config import VERSION as _ver_r5
-        assert _ver_r5.startswith('3.7')
+        assert _ver_r5.startswith('3.8')
         g5 = Game()
         g5.spawn_damage_number(100, 200, 42, crit=False)
         g5.spawn_damage_number(110, 210, 99, crit=True)
@@ -508,12 +508,12 @@ def test_sequel_features():
             assert g6.window_width == 960
             assert pers6.load_settings().get("window_width") == 960
             from config import VERSION as _ver_r6
-            assert _ver_r6.startswith("3.7")
+            assert _ver_r6.startswith("3.8")
             print("OK R6 window stretch toggle (960 default / 1280 optional)")
 
             # === R7: Survival difficulty ramp + mid-run milestones past 60s ===
             from config import MODE_SURVIVAL, VERSION as _ver_r7
-            assert _ver_r7.startswith("3.7")
+            assert _ver_r7.startswith("3.8")
             g7 = Game()
             g7.survival = True
             g7.game_mode = MODE_SURVIVAL
@@ -567,7 +567,7 @@ def test_sequel_features():
             )
             from enemies import Boss
             from config import VERSION as _ver_r8
-            assert _ver_r8.startswith("3.7")
+            assert _ver_r8.startswith("3.8")
             assert set(THEME_BOSS_VARIANT) == {t["id"] for t in WAVE_THEMES}
             assert "elite" in BOSS_VARIANT_META and "tank" in BOSS_VARIANT_META
             for tid, expected in THEME_BOSS_VARIANT.items():
@@ -598,7 +598,7 @@ def test_sequel_features():
 
             # === R9: Loadout polish + Settings joy-hat Window Size ===
             from config import VERSION as _ver_r9
-            assert _ver_r9.startswith("3.7")
+            assert _ver_r9.startswith("3.8")
             from game_states import LoadoutSelectState
             from loadouts import ARCHETYPES
             from persistence import Persistence as PersR9, DEFAULT_SETTINGS as _ds_r9
@@ -646,7 +646,7 @@ def test_sequel_features():
 
             # === R10: Survival threat-tier elite events + composition bias ===
             from config import VERSION as _ver_r10, MODE_SURVIVAL as _ms_r10
-            assert _ver_r10.startswith("3.7")
+            assert _ver_r10.startswith("3.8")
             g10 = Game()
             g10.game_mode = _ms_r10
             g10.survival = True
@@ -694,6 +694,61 @@ def test_sequel_features():
             assert e is not None
             assert int(g10.survival_event_spawns) == pending_before - 1
             print("OK R10 Survival threat-tier elite events + composition bias")
+
+            # === R11: Campaign secondary objectives + no_damage recursion fix ===
+            from config import VERSION as _ver_r11, MODE_CAMPAIGN as _mc_r11
+            assert _ver_r11.startswith("3.8")
+            from level_manager import LevelManager
+            g11 = Game()
+            g11.game_mode = _mc_r11
+            # Attach minimal attrs LevelManager expects
+            if not hasattr(g11, "enemies"):
+                import pygame
+                g11.enemies = pygame.sprite.Group()
+            lm11 = LevelManager(g11)
+            # Force-generate several levels; secondary may appear from level 3+
+            saw_secondary = False
+            for lvl in range(3, 12):
+                lm11.start_level(lvl)
+                data = lm11.current_level_data
+                assert data is not None
+                assert "objective_type" in data
+                assert "secondary_objective" in data
+                sec = data.get("secondary_objective")
+                if sec:
+                    saw_secondary = True
+                    assert sec.get("type") in ("no_damage", "collect_powerups", "survive_time", "extra_kills", "style_rank")
+                    assert sec.get("bonus_mult", 0) > 1.0
+                    assert sec.get("type") != data.get("objective_type") or sec.get("type") == "extra_kills"
+            assert saw_secondary, "expected at least one secondary across levels 3-11"
+            # no_damage primary: must NOT recurse; damage blocks clear
+            lm11.start_level(15)
+            lm11.current_level_data["objective_type"] = "no_damage"
+            lm11.current_level_data["boss_required"] = False
+            req = lm11.current_level_data["enemy_count"]
+            g11.enemies_killed_this_level = req
+            g11.damage_taken_this_level = 0
+            assert lm11.is_level_complete() is True
+            g11.damage_taken_this_level = 1
+            assert lm11.is_level_complete() is False
+            # secondary complete helper + reward bump
+            lm11.current_level_data["secondary_objective"] = {
+                "type": "no_damage", "label": "Zero damage", "target": 0,
+                "bonus_mult": 1.35, "description": "Take no damage this level",
+            }
+            g11.damage_taken_this_level = 0
+            assert lm11.is_secondary_complete() is True
+            base_reward_path = lm11.get_level_reward()
+            g11.damage_taken_this_level = 5
+            assert lm11.is_secondary_complete() is False
+            lower = lm11.get_level_reward()
+            assert base_reward_path > lower
+            # mission data exposes secondary
+            g11.damage_taken_this_level = 0
+            md = lm11.get_mission_data()
+            assert md.get("secondary") is not None
+            assert md["secondary"]["complete"] is True
+            print("OK R11 Campaign secondary objectives + no_damage recursion fix")
         finally:
             _pers_mod_r6._default_persistence = _prev_pers
         # loadout select state (R9 polish)
@@ -1113,7 +1168,7 @@ def test_headless_verifier_env_destr_abilities_keys():
 
 def main():
     """Run all tests"""
-    print("🛸 Space Shooter: Stellar Vanguard v3.7 - Test Suite")
+    print("🛸 Space Shooter: Stellar Vanguard v3.8 - Test Suite")
     print("=" * 40)
 
     tests = [
@@ -1136,7 +1191,7 @@ def main():
     print(f"Test Results: {passed}/{total} tests passed")
 
     if passed == total:
-        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.7 is ready to launch!")
+        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.8 is ready to launch!")
         return 0
     else:
         print("❌ Some tests failed. Please check the errors above.")
