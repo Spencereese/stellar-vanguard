@@ -1627,6 +1627,22 @@ class BossIncomingState(GameState):
         self.timer = 0
         self.game._boss_incoming_timer = 0
         self.game.play_music("boss_music")
+        # R8: resolve archetype early so incoming banner can show the title
+        try:
+            from wave_themes import boss_variant_from_theme, boss_variant_meta
+            theme = getattr(self.game, "wave_theme", None)
+            if theme is None and getattr(self.game, "session", None) is not None:
+                theme = getattr(self.game.session, "wave_theme", None)
+            wave = int(getattr(self.game, "wave", 1) or 1)
+            if getattr(self.game, "session", None) is not None:
+                wave = int(getattr(self.game.session, "wave", wave) or wave)
+            variant = boss_variant_from_theme(theme, wave)
+            meta = boss_variant_meta(variant)
+            self.game.pending_boss_variant = variant
+            self.game.pending_boss_title = meta.get("title", "BOSS")
+        except Exception:
+            self.game.pending_boss_variant = getattr(self.game, "pending_boss_variant", None) or "elite"
+            self.game.pending_boss_title = getattr(self.game, "pending_boss_title", None) or "ELITE OVERLORD"
         # Stop normal spawns during warning for drama
         if hasattr(self.game, 'session') and self.game.session:
             self.game.session.boss_spawned = True  # temporarily treat as boss phase for spawning
@@ -1659,10 +1675,12 @@ class BossIncomingState(GameState):
 
         if self.timer > 180:  # ~3 seconds buildup
             # Spawn boss with impressive entrance
-            boss = Boss(self.game)
+            variant = getattr(self.game, "pending_boss_variant", None)
+            boss = Boss(self.game, variant=variant)
             self.game.all_sprites.add(boss)
             self.game.enemies.add(boss)
             self.game.boss_spawned = True
+            self.game.pending_boss_title = getattr(boss, "boss_title", getattr(self.game, "pending_boss_title", None))
             # Big entrance FX
             try:
                 for _ in range(60):

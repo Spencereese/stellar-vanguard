@@ -103,3 +103,91 @@ def boss_minion_type(theme, phase: int = 1):
     if phase >= 2 and "healer" not in pool:
         pool = pool + ["healer"]
     return random.choice(pool)
+
+
+# R8: Survival / themed boss archetypes reuse existing enemy types (no new content).
+THEME_BOSS_VARIANT = {
+    "assault": "shooter",
+    "swarm": "swarmer",
+    "armor": "tank",
+    "support": "healer",
+    "ghost": "teleporter",
+    "fracture": "splitter",
+    "mixed": "elite",
+}
+
+BOSS_VARIANT_META = {
+    "tank": {
+        "title": "TANK DREADNOUGHT",
+        "body": (80, 100, 140),
+        "core": (180, 200, 255),
+        "hp_mult": 1.35,
+        "minions": ["tank", "turret", "big"],
+    },
+    "swarmer": {
+        "title": "SWARM MATRIARCH",
+        "body": (160, 60, 180),
+        "core": (255, 150, 255),
+        "hp_mult": 0.85,
+        "minions": ["swarmer", "drone", "fast"],
+    },
+    "elite": {
+        "title": "ELITE OVERLORD",
+        "body": (180, 40, 40),
+        "core": (255, 200, 80),
+        "hp_mult": 1.15,
+        "minions": ["elite", "shooter", "bomber"],
+    },
+    "healer": {
+        "title": "SUPPORT NEXUS",
+        "body": (40, 140, 90),
+        "core": (120, 255, 180),
+        "hp_mult": 1.0,
+        "minions": ["healer", "elite", "drone"],
+    },
+    "teleporter": {
+        "title": "PHASE WRAITH",
+        "body": (60, 60, 140),
+        "core": (140, 180, 255),
+        "hp_mult": 0.9,
+        "minions": ["teleporter", "cloaker", "fast"],
+    },
+    "shooter": {
+        "title": "ARTILLERY PRIME",
+        "body": (160, 80, 40),
+        "core": (255, 180, 60),
+        "hp_mult": 1.05,
+        "minions": ["shooter", "turret", "bomber"],
+    },
+    "bomber": {
+        "title": "PAYLOAD TITAN",
+        "body": (120, 50, 30),
+        "core": (255, 100, 40),
+        "hp_mult": 1.2,
+        "minions": ["bomber", "kamikaze", "tank"],
+    },
+    "splitter": {
+        "title": "FRACTURE CORE",
+        "body": (100, 140, 60),
+        "core": (200, 255, 100),
+        "hp_mult": 1.1,
+        "minions": ["splitter", "swarmer", "big"],
+    },
+}
+
+
+def boss_variant_from_theme(theme, wave: int = 1):
+    """Pick an existing-enemy-type boss archetype from the active theme."""
+    if theme and theme.get("id") in THEME_BOSS_VARIANT:
+        return THEME_BOSS_VARIANT[theme["id"]]
+    # Fallback: rotate a few solid archetypes by wave so Survival still varies
+    fallback = ["elite", "tank", "swarmer", "shooter", "healer", "teleporter"]
+    return fallback[max(0, int(wave or 1) - 1) % len(fallback)]
+
+
+def boss_variant_meta(variant: str):
+    """Metadata for a boss archetype (title/colors/hp/minions)."""
+    if variant in BOSS_VARIANT_META:
+        return BOSS_VARIANT_META[variant]
+    return BOSS_VARIANT_META["elite"]
+

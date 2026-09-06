@@ -447,23 +447,42 @@ class Enemy(pygame.sprite.Sprite):
             pass
 
 class Boss(pygame.sprite.Sprite):
-    def __init__(self, game):
+    def __init__(self, game, variant=None):
         super().__init__()
         self.game = game
+        # R8: optional archetype from existing enemy types (Survival variety)
+        try:
+            from wave_themes import boss_variant_meta, boss_variant_from_theme
+            if not variant:
+                theme = getattr(game, 'wave_theme', None) or getattr(getattr(game, 'session', None), 'wave_theme', None)
+                wave = int(getattr(game, 'wave', 1) or 1)
+                variant = boss_variant_from_theme(theme, wave)
+            self.boss_variant = variant or 'elite'
+            self._variant_meta = boss_variant_meta(self.boss_variant)
+        except Exception:
+            self.boss_variant = variant or 'elite'
+            self._variant_meta = {
+                'title': 'ELITE OVERLORD', 'body': (180, 40, 40), 'core': (255, 200, 80),
+                'hp_mult': 1.15, 'minions': ['elite', 'shooter', 'bomber'],
+            }
+        self.boss_title = self._variant_meta.get('title', 'BOSS')
         # Animation for boss - unique multi-part design (init early)
         self._anim_phase = 0.0
         self._anim_speed = 0.07
         # _base_draw will be set by the draw_boss closure below
         def draw_boss(surface, phase=0.0, health_ratio=1.0):
             # Unique boss design: multi-part with sweeping side guns, pulsing core, charge visual
-            # Main body
-            body_col = (180, 40, 40) if not getattr(self, 'is_charging', False) else (220, 80, 40)
+            # Main body (R8: tint by existing-enemy-type archetype)
+            meta = getattr(self, '_variant_meta', None) or {}
+            base_body = meta.get('body', (180, 40, 40))
+            body_col = base_body if not getattr(self, 'is_charging', False) else tuple(min(255, c + 40) for c in base_body)
             pygame.draw.polygon(surface, body_col, [(0, 60), (40, 0), (80, 60), (40, 40)])
             
             # Central core pulse (unique energy signature)
             core_pulse = 0.7 + 0.3 * math.sin(phase * 5)
             core_r = int(8 + 4 * core_pulse)
-            pygame.draw.circle(surface, (255, 200, 80), (40, 30), core_r)
+            core_col = meta.get('core', (255, 200, 80))
+            pygame.draw.circle(surface, core_col, (40, 30), core_r)
             pygame.draw.circle(surface, (255, 255, 200), (40, 30), max(2, int(core_r * 0.4)))
             
             # Side weapon pods that sweep with phase (very distinctive)
@@ -488,14 +507,21 @@ class Boss(pygame.sprite.Sprite):
                 surface.blit(glow_surf, (0, 0))
         self.image = load_image_with_fallback('boss.png', (150, 113), draw_boss)
         self._base_draw = draw_boss  # enable live boss animation refresh
-        # Prefer upgraded generated boss art (v4) for impressive look
-        try:
-            assets = getattr(self.game, 'assets', None) or get_asset_manager()
-            b4 = assets.load_image('boss_v4.png', (150, 113))
-            if b4 and b4.get_size() != (1,1):
-                self.image = b4
-        except:
-            pass
+        # Prefer upgraded generated boss art (v4) unless R8 variant tint should show
+        if not getattr(self, 'boss_variant', None) or getattr(self, 'boss_variant', None) == 'elite':
+            try:
+                assets = getattr(self.game, 'assets', None) or get_asset_manager()
+                b4 = assets.load_image('boss_v4.png', (150, 113))
+                if b4 and b4.get_size() != (1,1):
+                    self.image = b4
+            except:
+                pass
+        else:
+            # Force procedural draw so archetype colors are visible
+            try:
+                self._refresh_animated_image(0.0)
+            except Exception:
+                pass
         self.rect = self.image.get_rect()
         self.rect.centerx = SCREEN_WIDTH + 100
         self.rect.centery = SCREEN_HEIGHT // 2
@@ -504,7 +530,13 @@ class Boss(pygame.sprite.Sprite):
         self.speed = 1
         # Significantly increased health for epic boss battles
         base_health = 50 + (self.game.wave * 10)  # Much higher base health
-        self.health = int(base_health * (0.8 if self.game.difficulty == 'easy' else 1.2 if self.game.difficulty == 'hard' else 1.0))
+        # R8: archetype hp_mult (existing enemy types)
+        vmult = float((getattr(self, '_variant_meta', {}) or {}).get('hp_mult', 1.0) or 1.0)
+        # Survival bosses scale lightly with pressure
+        if getattr(self.game, 'survival', False):
+            pressure = float(getattr(self.game, 'survival_pressure', 1.0) or 1.0)
+            vmult *= (0.95 + 0.08 * min(pressure, 2.5))
+        self.health = int(base_health * vmult * (0.8 if self.game.difficulty == 'easy' else 1.2 if self.game.difficulty == 'hard' else 1.0))
         self.shoot_timer = 0
         self.special_timer = 0
         self.phase = 1
@@ -663,9 +695,21 @@ class Boss(pygame.sprite.Sprite):
     def special_attack(self):
         """Boss special attack - spawns themed enemies and projectiles"""
         if self.phase == 1:
-            # Phase 1: Spawn elite guards
+            # Phase 1: Spawn archetype guards (R8: existing enemy types)
+            minions = list((getattr(self, '_variant_meta', {}) or {}).get('minions') or ['elite', 'shooter'])
             for i in range(2):
-                enemy = Elite(self.game)
+                etype = minions[i % len(minions)]
+                enemy = None
+                try:
+                    if hasattr(self.game, 'session') and self.game.session and hasattr(self.game.session, 'spawn_enemy'):
+                        enemy = self.game.session.spawn_enemy(etype)
+                    else:
+                        from registries import create_enemy_from_registry
+                        enemy = create_enemy_from_registry(self.game, etype)
+                except Exception:
+                    enemy = None
+                if enemy is None:
+                    enemy = Elite(self.game)
                 enemy.rect.x = self.rect.centerx + random.randint(-100, 100)
                 enemy.rect.y = self.rect.centery + random.randint(-50, 50)
                 self.game.enemies.add(enemy)

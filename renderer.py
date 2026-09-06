@@ -458,7 +458,8 @@ class Renderer:
                     # Boss name and health text (R3: show phase)
                     phase = getattr(e, "phase", getattr(game, "boss_phase", 1))
                     wind = " [CHARGING!]" if getattr(e, "is_winding_up", False) else ""
-                    boss_text = f"BOSS P{phase}{wind} - {int(e.health)}/{int(e.max_health)}"
+                    title = getattr(e, "boss_title", None) or "BOSS"
+                    boss_text = f"{title} P{phase}{wind} - {int(e.health)}/{int(e.max_health)}"
                     # Render boss text scaled: render then scale down/up to match UI scale
                     text_surf = self.render_shadowed_text(boss_text, WHITE, game.font)
                     if self.ui_scale != 1.0:
@@ -1575,7 +1576,7 @@ class Renderer:
         try:
             base_font = game.font
             # Main title - grows in intensity
-            title = "BOSS INCOMING"
+            title = getattr(game, "pending_boss_title", None) or "BOSS INCOMING"
             title_surf = base_font.render(title, True, (255, 60, 60))
             # Simple scale via rotozoom (cheap for one text)
             if scale != 1.0:
@@ -1594,11 +1595,12 @@ class Renderer:
             self.game.screen.blit(boss_text, (w//2 - boss_text.get_width()//2, int(h * 0.38)))
 
         # Subtext that changes with phase (buildup feel like other games)
+        pending = getattr(game, "pending_boss_title", None) or ""
         sub = "THREAT DETECTED • PREPARE FOR ENGAGEMENT"
         if phase > 0.33:
-            sub = "WARNING • BOSS APPROACHING"
+            sub = f"WARNING • {pending} APPROACHING" if pending else "WARNING • BOSS APPROACHING"
         if phase > 0.66:
-            sub = "!! BOSS INCOMING - STAND BY !!"
+            sub = f"!! {pending} - STAND BY !!" if pending else "!! BOSS INCOMING - STAND BY !!"
         sub_surf = self.render_shadowed_text(sub, (255, 220, 80), game.small_font)
         self.game.screen.blit(sub_surf, (w//2 - sub_surf.get_width()//2, int(h * 0.38) + 55))
 

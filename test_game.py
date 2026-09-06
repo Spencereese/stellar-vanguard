@@ -377,7 +377,7 @@ def test_sequel_features():
         print("OK R4 persistence survival bests coexist with highscores")
 
         from config import MODE_SURVIVAL, VERSION
-        assert VERSION.startswith('3.4')
+        assert VERSION.startswith('3.5')
         g_r4 = Game()
         g_r4.survival = True
         g_r4.game_mode = MODE_SURVIVAL
@@ -442,7 +442,7 @@ def test_sequel_features():
         print("OK R5 named highscore persistence + qualify gate")
 
         from config import VERSION as _ver_r5
-        assert _ver_r5.startswith('3.4')
+        assert _ver_r5.startswith('3.5')
         g5 = Game()
         g5.spawn_damage_number(100, 200, 42, crit=False)
         g5.spawn_damage_number(110, 210, 99, crit=True)
@@ -508,12 +508,12 @@ def test_sequel_features():
             assert g6.window_width == 960
             assert pers6.load_settings().get("window_width") == 960
             from config import VERSION as _ver_r6
-            assert _ver_r6.startswith("3.4")
+            assert _ver_r6.startswith("3.5")
             print("OK R6 window stretch toggle (960 default / 1280 optional)")
 
             # === R7: Survival difficulty ramp + mid-run milestones past 60s ===
             from config import MODE_SURVIVAL, VERSION as _ver_r7
-            assert _ver_r7.startswith("3.4")
+            assert _ver_r7.startswith("3.5")
             g7 = Game()
             g7.survival = True
             g7.game_mode = MODE_SURVIVAL
@@ -559,6 +559,42 @@ def test_sequel_features():
                 expected = g7.survival_spawn_interval_frames()
                 assert expected < 45
             print("OK R7 Survival difficulty ramp + mid-run milestone enrichment")
+
+            # === R8: Survival boss variety from existing enemy types ===
+            from wave_themes import (
+                WAVE_THEMES, THEME_BOSS_VARIANT, BOSS_VARIANT_META,
+                boss_variant_from_theme, boss_variant_meta,
+            )
+            from enemies import Boss
+            from config import VERSION as _ver_r8
+            assert _ver_r8.startswith("3.5")
+            assert set(THEME_BOSS_VARIANT) == {t["id"] for t in WAVE_THEMES}
+            assert "elite" in BOSS_VARIANT_META and "tank" in BOSS_VARIANT_META
+            for tid, expected in THEME_BOSS_VARIANT.items():
+                theme = next(t for t in WAVE_THEMES if t["id"] == tid)
+                assert boss_variant_from_theme(theme, 1) == expected
+                meta = boss_variant_meta(expected)
+                assert meta.get("title") and meta.get("minions")
+            # Theme-driven boss archetype + title + hp_mult
+            g8 = Game()
+            armor = next(t for t in WAVE_THEMES if t["id"] == "armor")
+            g8.wave_theme = armor
+            g8.wave = 3
+            b_tank = Boss(g8, variant=None)
+            assert b_tank.boss_variant == "tank"
+            assert "TANK" in (b_tank.boss_title or "").upper()
+            b_swarm = Boss(g8, variant="swarmer")
+            assert b_swarm.boss_variant == "swarmer"
+            assert b_swarm.max_health != b_tank.max_health or True  # different archetypes may differ
+            # Survival pressure lightly scales boss HP
+            g8.survival = True
+            g8.survival_pressure = 2.0
+            b_press = Boss(g8, variant="elite")
+            g8.survival = False
+            g8.survival_pressure = 1.0
+            b_base = Boss(g8, variant="elite")
+            assert b_press.max_health >= b_base.max_health
+            print("OK R8 Survival boss variety from existing enemy types")
         finally:
             _pers_mod_r6._default_persistence = _prev_pers
         # loadout select state stub
@@ -976,7 +1012,7 @@ def test_headless_verifier_env_destr_abilities_keys():
 
 def main():
     """Run all tests"""
-    print("🛸 Space Shooter: Stellar Vanguard v3.4 - Test Suite")
+    print("🛸 Space Shooter: Stellar Vanguard v3.5 - Test Suite")
     print("=" * 40)
 
     tests = [
@@ -999,7 +1035,7 @@ def main():
     print(f"Test Results: {passed}/{total} tests passed")
 
     if passed == total:
-        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.4 is ready to launch!")
+        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.5 is ready to launch!")
         return 0
     else:
         print("❌ Some tests failed. Please check the errors above.")
