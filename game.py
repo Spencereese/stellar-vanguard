@@ -340,6 +340,15 @@ class Game:
         self.survival_pressure = 1.0
         self.survival_threat_tier = 0
         self.survival_threat_label = 'CALM'
+        # R10: Survival threat-tier elite events + composition bias
+        self._survival_last_threat_tier = 0
+        self._survival_events_fired = set()
+        self.survival_event_active = False
+        self.survival_event_label = ''
+        self.survival_event_timer = 0
+        self.survival_event_spawns = 0
+        self.survival_event_kills = 0
+        self.survival_event_kills_needed = 0
         try:
             sb = pers.load_survival_best()
             self.best_survival_time = float(sb.get('best_time', 0) or 0)
@@ -533,6 +542,132 @@ class Game:
             rate -= 4
         return max(8, int(rate))
 
+    @staticmethod
+    def survival_elite_types(tier):
+        """Tougher enemy types unlocked by Survival threat tier (existing enemies only)."""
+        try:
+            t = max(0, int(tier or 0))
+        except Exception:
+            t = 0
+        # Progressive unlock of existing archetypes — no new enemy classes.
+        base = ['elite', 'tank', 'shooter']
+        if t >= 2:
+            base = base + ['bomber', 'healer']
+        if t >= 3:
+            base = base + ['teleporter', 'swarmer']
+        if t >= 4:
+            base = base + ['kamikaze', 'turret']
+        if t >= 5:
+            base = base + ['drone', 'zigzag']
+        return list(base)
+
+    def survival_composition_bias(self, tier=None):
+        """0.0..~0.75 chance to force an elite-pool pick on ordinary Survival spawns."""
+        if tier is None:
+            tier = getattr(self, 'survival_threat_tier', 0)
+        try:
+            t = max(0, int(tier or 0))
+        except Exception:
+            t = 0
+        # CALM/RISING soft; HOSTILE+ meaningfully biased
+        return float(min(0.75, 0.08 + t * 0.12))
+
+    def maybe_fire_survival_threat_event(self):
+        """On threat-tier up (past CALM), queue an elite pack event once per tier."""
+        if not getattr(self, 'survival', False):
+            return False
+        tier = int(getattr(self, 'survival_threat_tier', 0) or 0)
+        last = int(getattr(self, '_survival_last_threat_tier', 0) or 0)
+        if tier <= last:
+            self._survival_last_threat_tier = max(last, tier)
+            return False
+        # Tier increased
+        self._survival_last_threat_tier = tier
+        if tier <= 0:
+            return False
+        fired = getattr(self, '_survival_events_fired', None)
+        if fired is None:
+            self._survival_events_fired = set()
+            fired = self._survival_events_fired
+        if tier in fired:
+            return False
+        # Don't stack over an open milestone shop transition
+        if getattr(self, 'just_survival_milestone', False):
+            return False
+        return self.fire_survival_threat_event(tier)
+
+    def fire_survival_threat_event(self, tier=None):
+        """Start a short elite-swarm event for the given threat tier."""
+        if tier is None:
+            tier = int(getattr(self, 'survival_threat_tier', 0) or 0)
+        tier = max(1, int(tier))
+        label = getattr(self, 'survival_threat_label', None) or self.survival_threat_meta(tier * 60)[1]
+        fired = getattr(self, '_survival_events_fired', None)
+        if fired is None:
+            self._survival_events_fired = set()
+            fired = self._survival_events_fired
+        fired.add(tier)
+        # Pack size + kill quota scale with tier
+        spawns = 3 + min(6, tier)  # 4..9
+        kills_needed = max(3, spawns - 1)
+        self.survival_event_active = True
+        self.survival_event_label = f"ELITE SWARM — {label}"
+        self.survival_event_timer = 60 * (8 + min(6, tier))  # ~8-14s window
+        self.survival_event_spawns = int(spawns)
+        self.survival_event_kills = 0
+        self.survival_event_kills_needed = int(kills_needed)
+        self.wave_theme_name = self.survival_event_label
+        self.wave_banner_timer = 120
+        return True
+
+    def note_survival_kill(self):
+        """Advance active Survival elite-event kill progress (safe no-op otherwise)."""
+        if not getattr(self, 'survival', False):
+            return False
+        if not getattr(self, 'survival_event_active', False):
+            return False
+        self.survival_event_kills = int(getattr(self, 'survival_event_kills', 0) or 0) + 1
+        needed = int(getattr(self, 'survival_event_kills_needed', 0) or 0)
+        if needed > 0 and self.survival_event_kills >= needed:
+            self.complete_survival_event(cleared=True)
+            return True
+        return False
+
+    def tick_survival_event(self):
+        """Countdown event window; expire without clear bonus if timer hits 0 with spawns left."""
+        if not getattr(self, 'survival_event_active', False):
+            return
+        self.survival_event_timer = int(getattr(self, 'survival_event_timer', 0) or 0) - 1
+        # If all queued elites are out and kills met, complete early via note_survival_kill.
+        if self.survival_event_timer <= 0:
+            # Time up: partial credit if any kills, else just clear flag
+            kills = int(getattr(self, 'survival_event_kills', 0) or 0)
+            needed = int(getattr(self, 'survival_event_kills_needed', 1) or 1)
+            self.complete_survival_event(cleared=(kills >= max(1, needed // 2)))
+
+    def complete_survival_event(self, cleared=True):
+        """Finish elite event; cleared grants coin/score juice + banner."""
+        if not getattr(self, 'survival_event_active', False):
+            return
+        tier = int(getattr(self, 'survival_threat_tier', 1) or 1)
+        self.survival_event_active = False
+        self.survival_event_spawns = 0
+        self.survival_event_timer = 0
+        label = getattr(self, 'survival_event_label', 'ELITE SWARM') or 'ELITE SWARM'
+        if cleared:
+            stipend = 25 + tier * 15
+            score_bonus = 60 + tier * 40
+            self.coins = int(getattr(self, 'coins', 0)) + int(stipend * getattr(self, 'coin_multiplier', 1.0))
+            self.score = int(getattr(self, 'score', 0)) + int(score_bonus * getattr(self, 'exp_multiplier', 1.0))
+            self.wave_theme_name = f"{label} CLEARED +{score_bonus}"
+            self.wave_banner_timer = 90
+        else:
+            self.wave_theme_name = f"{label} FADED"
+            self.wave_banner_timer = 60
+        self.survival_event_label = ''
+        self.survival_event_kills = 0
+        self.survival_event_kills_needed = 0
+
     def apply_difficulty(self):
         if self.difficulty == 'easy':
             self.enemy_speed = 2
@@ -609,6 +744,14 @@ class Game:
         self.survival_pressure = 1.0
         self.survival_threat_tier = 0
         self.survival_threat_label = 'CALM'
+        self._survival_last_threat_tier = 0
+        self._survival_events_fired = set()
+        self.survival_event_active = False
+        self.survival_event_label = ''
+        self.survival_event_timer = 0
+        self.survival_event_spawns = 0
+        self.survival_event_kills = 0
+        self.survival_event_kills_needed = 0
         self.freeze_timer = 0
         self.bg_x = 0
         self.wave = 1
@@ -805,6 +948,12 @@ class Game:
                 self.refresh_survival_pressure()
             except Exception:
                 self.survival_pressure = self.compute_survival_pressure(self.survival_time)
+            # R10: threat-tier elite events (between milestone shops)
+            try:
+                self.maybe_fire_survival_threat_event()
+                self.tick_survival_event()
+            except Exception as _r10ex:
+                print('Survival threat event note:', _r10ex)
             # 5-min achievement
             if self.survival_time >= 300 and not self.achievements.get('survive_5_min', False):
                 self.achievements['survive_5_min'] = True
@@ -887,6 +1036,10 @@ class Game:
         self.coins += int(1 * self.coin_multiplier)
         self.enemies_killed += 1
         self.enemies_killed_this_level += 1
+        try:
+            self.note_survival_kill()
+        except Exception:
+            pass
         for _ in range(10):
             p = Particle(enemy.rect.centerx, enemy.rect.centery, RED, 'explosion')
             self.particles.append(p)

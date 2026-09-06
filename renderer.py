@@ -534,7 +534,13 @@ class Renderer:
                 best_t = float(getattr(game, 'best_survival_time', 0) or 0)
                 threat = getattr(game, 'survival_threat_label', None) or 'CALM'
                 pressure = float(getattr(game, 'survival_pressure', 1.0) or 1.0)
-                timer_txt = f"SURVIVE {mins:02d}:{secs:02d}  next shop {nxt}s  {threat} x{pressure:.2f}  best {int(best_t)}s"
+                event_chip = ''
+                if getattr(game, 'survival_event_active', False):
+                    ek = int(getattr(game, 'survival_event_kills', 0) or 0)
+                    en = int(getattr(game, 'survival_event_kills_needed', 0) or 0)
+                    elabel = getattr(game, 'survival_event_label', 'ELITE') or 'ELITE'
+                    event_chip = f"  |  {elabel} {ek}/{en}"
+                timer_txt = f"SURVIVE {mins:02d}:{secs:02d}  next shop {nxt}s  {threat} x{pressure:.2f}  best {int(best_t)}s{event_chip}"
                 ts = self.render_shadowed_text(timer_txt, GOLD, game.tiny_font)
                 surface.blit(ts, (10, 42))
         except Exception:

@@ -384,7 +384,33 @@ class SimulationWorld:
     def spawn_enemy(self, enemy_type=None):
         """Factory using registries if available, else direct. Creative: supports new types from registries.py.
         R3: when enemy_type is None, bias toward active wave theme pool (existing enemies only).
+        R10: Survival threat events force elite-pack spawns; composition bias by threat tier.
         """
+        if enemy_type is None and getattr(self.game, 'survival', False):
+            # Active elite-swarm event: drain queued forced spawns first
+            pending = int(getattr(self.game, 'survival_event_spawns', 0) or 0)
+            if pending > 0 and getattr(self.game, 'survival_event_active', False):
+                try:
+                    tier = int(getattr(self.game, 'survival_threat_tier', 1) or 1)
+                    elites = self.game.survival_elite_types(tier) if hasattr(self.game, 'survival_elite_types') else ['elite', 'tank', 'shooter']
+                    enemy_type = random.choice(elites)
+                    self.game.survival_event_spawns = pending - 1
+                except Exception:
+                    enemy_type = 'elite'
+                    try:
+                        self.game.survival_event_spawns = max(0, pending - 1)
+                    except Exception:
+                        pass
+            else:
+                # Soft composition bias toward tougher types as threat rises
+                try:
+                    bias = float(self.game.survival_composition_bias()) if hasattr(self.game, 'survival_composition_bias') else 0.0
+                    if bias > 0 and random.random() < bias:
+                        tier = int(getattr(self.game, 'survival_threat_tier', 0) or 0)
+                        elites = self.game.survival_elite_types(tier) if hasattr(self.game, 'survival_elite_types') else ['elite', 'tank']
+                        enemy_type = random.choice(elites)
+                except Exception:
+                    pass
         if enemy_type is None:
             try:
                 from enemies import enemy_pools
@@ -644,6 +670,11 @@ class SimulationWorld:
             self.game.enemies_killed += 1
         if hasattr(self.game, 'enemies_killed_this_level'):
             self.game.enemies_killed_this_level += 1
+        try:
+            if hasattr(self.game, 'note_survival_kill'):
+                self.game.note_survival_kill()
+        except Exception:
+            pass
         # Rich impressive death FX
         try:
             from particles import emit_explosion

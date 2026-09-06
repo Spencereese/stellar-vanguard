@@ -377,7 +377,7 @@ def test_sequel_features():
         print("OK R4 persistence survival bests coexist with highscores")
 
         from config import MODE_SURVIVAL, VERSION
-        assert VERSION.startswith('3.6')
+        assert VERSION.startswith('3.7')
         g_r4 = Game()
         g_r4.survival = True
         g_r4.game_mode = MODE_SURVIVAL
@@ -442,7 +442,7 @@ def test_sequel_features():
         print("OK R5 named highscore persistence + qualify gate")
 
         from config import VERSION as _ver_r5
-        assert _ver_r5.startswith('3.6')
+        assert _ver_r5.startswith('3.7')
         g5 = Game()
         g5.spawn_damage_number(100, 200, 42, crit=False)
         g5.spawn_damage_number(110, 210, 99, crit=True)
@@ -508,12 +508,12 @@ def test_sequel_features():
             assert g6.window_width == 960
             assert pers6.load_settings().get("window_width") == 960
             from config import VERSION as _ver_r6
-            assert _ver_r6.startswith("3.6")
+            assert _ver_r6.startswith("3.7")
             print("OK R6 window stretch toggle (960 default / 1280 optional)")
 
             # === R7: Survival difficulty ramp + mid-run milestones past 60s ===
             from config import MODE_SURVIVAL, VERSION as _ver_r7
-            assert _ver_r7.startswith("3.6")
+            assert _ver_r7.startswith("3.7")
             g7 = Game()
             g7.survival = True
             g7.game_mode = MODE_SURVIVAL
@@ -567,7 +567,7 @@ def test_sequel_features():
             )
             from enemies import Boss
             from config import VERSION as _ver_r8
-            assert _ver_r8.startswith("3.6")
+            assert _ver_r8.startswith("3.7")
             assert set(THEME_BOSS_VARIANT) == {t["id"] for t in WAVE_THEMES}
             assert "elite" in BOSS_VARIANT_META and "tank" in BOSS_VARIANT_META
             for tid, expected in THEME_BOSS_VARIANT.items():
@@ -598,7 +598,7 @@ def test_sequel_features():
 
             # === R9: Loadout polish + Settings joy-hat Window Size ===
             from config import VERSION as _ver_r9
-            assert _ver_r9.startswith("3.6")
+            assert _ver_r9.startswith("3.7")
             from game_states import LoadoutSelectState
             from loadouts import ARCHETYPES
             from persistence import Persistence as PersR9, DEFAULT_SETTINGS as _ds_r9
@@ -641,7 +641,59 @@ def test_sequel_features():
             w0 = g9b.window_width
             g9b.toggle_window_size()
             assert g9b.window_width in (960, 1280) and g9b.window_width != w0
+
             print("OK R9 loadout polish (cards/pad/persist) + Settings joy-hat Window Size")
+
+            # === R10: Survival threat-tier elite events + composition bias ===
+            from config import VERSION as _ver_r10, MODE_SURVIVAL as _ms_r10
+            assert _ver_r10.startswith("3.7")
+            g10 = Game()
+            g10.game_mode = _ms_r10
+            g10.survival = True
+            # Elite pool unlocks with tier
+            e0 = g10.survival_elite_types(0)
+            e2 = g10.survival_elite_types(2)
+            e3 = g10.survival_elite_types(3)
+            e4 = g10.survival_elite_types(4)
+            assert "elite" in e0 and "tank" in e0
+            assert "healer" in e2 and "bomber" in e2
+            assert "teleporter" in e3 and "swarmer" in e3
+            assert len(e4) >= len(e3) >= len(e2) >= len(e0)
+            assert g10.survival_composition_bias(0) < g10.survival_composition_bias(3)
+            assert g10.survival_composition_bias(8) <= 0.75 + 1e-9
+            # Fire threat event on tier up
+            g10.survival_time = 60.0  # RISING tier 1
+            g10.refresh_survival_pressure()
+            assert g10.survival_threat_tier >= 1
+            g10._survival_last_threat_tier = 0
+            g10._survival_events_fired = set()
+            fired = g10.maybe_fire_survival_threat_event()
+            assert fired is True
+            assert g10.survival_event_active is True
+            assert g10.survival_event_spawns >= 3
+            assert g10.survival_event_kills_needed >= 3
+            assert "ELITE" in (g10.survival_event_label or "").upper()
+            # Same tier does not re-fire
+            assert g10.maybe_fire_survival_threat_event() is False
+            # Kill progress clears event
+            coins0 = g10.coins
+            score0 = g10.score
+            needed = int(g10.survival_event_kills_needed)
+            for _ in range(needed):
+                g10.note_survival_kill()
+            assert g10.survival_event_active is False
+            assert g10.coins > coins0 and g10.score > score0
+            # Simulation respects forced elite spawns during event
+            g10.fire_survival_threat_event(2)
+            pending_before = int(g10.survival_event_spawns)
+            from simulation import SimulationWorld
+            sess = SimulationWorld(g10)
+            if getattr(sess, "player", None) is None:
+                sess.player = g10.player
+            e = sess.spawn_enemy()
+            assert e is not None
+            assert int(g10.survival_event_spawns) == pending_before - 1
+            print("OK R10 Survival threat-tier elite events + composition bias")
         finally:
             _pers_mod_r6._default_persistence = _prev_pers
         # loadout select state (R9 polish)
@@ -1061,7 +1113,7 @@ def test_headless_verifier_env_destr_abilities_keys():
 
 def main():
     """Run all tests"""
-    print("🛸 Space Shooter: Stellar Vanguard v3.6 - Test Suite")
+    print("🛸 Space Shooter: Stellar Vanguard v3.7 - Test Suite")
     print("=" * 40)
 
     tests = [
@@ -1084,7 +1136,7 @@ def main():
     print(f"Test Results: {passed}/{total} tests passed")
 
     if passed == total:
-        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.6 is ready to launch!")
+        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.7 is ready to launch!")
         return 0
     else:
         print("❌ Some tests failed. Please check the errors above.")
