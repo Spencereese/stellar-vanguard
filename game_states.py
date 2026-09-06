@@ -271,6 +271,8 @@ class SettingsState(GameState):
                 elif self.game.selected_setting == 2:  # SFX Volume
                     self.game.sfx_volume = max(0, self.game.sfx_volume - 0.1)
                     self.game.update_sound_volumes()
+                elif self.game.selected_setting == 3:  # Window Size
+                    self.game.toggle_window_size()
             elif event.key == pygame.K_d or event.key == pygame.K_RIGHT:
                 if self.game.selected_setting == 1:  # Music Volume
                     self.game.music_volume = min(1, self.game.music_volume + 0.1)
@@ -278,6 +280,8 @@ class SettingsState(GameState):
                 elif self.game.selected_setting == 2:  # SFX Volume
                     self.game.sfx_volume = min(1, self.game.sfx_volume + 0.1)
                     self.game.update_sound_volumes()
+                elif self.game.selected_setting == 3:  # Window Size
+                    self.game.toggle_window_size()
             elif event.key == pygame.K_RETURN:
                 if self.game.selected_setting == 0:  # Difficulty
                     # Cycle through difficulties
@@ -288,11 +292,13 @@ class SettingsState(GameState):
                     else:
                         self.game.difficulty = 'easy'
                     self.game.apply_difficulty()
-                elif self.game.selected_setting == 3:  # Leaderboard
+                elif self.game.selected_setting == 3:  # Window Size (R6: 960 <-> 1280 stretch)
+                    self.game.toggle_window_size()
+                elif self.game.selected_setting == 4:  # Leaderboard
                     self.game.change_state(LeaderboardState(self.game))
-                elif self.game.selected_setting == 4:  # Upgrade Tree
+                elif self.game.selected_setting == 5:  # Upgrade Tree
                     self.game.change_state(UpgradeTreeState(self.game))
-                elif self.game.selected_setting == 5:  # Back
+                elif self.game.selected_setting == 6:  # Back
                     self.game.change_state(MenuState(self.game))
         elif event.type == pygame.JOYHATMOTION:
             if event.value[1] == 1:  # D-pad up
@@ -351,11 +357,13 @@ class SettingsState(GameState):
                     else:
                         self.game.difficulty = 'easy'
                     self.game.apply_difficulty()
-                elif self.game.selected_setting == 3:  # Leaderboard
+                elif self.game.selected_setting == 3:  # Window Size (R6)
+                    self.game.toggle_window_size()
+                elif self.game.selected_setting == 4:  # Leaderboard
                     self.game.change_state(LeaderboardState(self.game))
-                elif self.game.selected_setting == 4:  # Upgrade Tree
+                elif self.game.selected_setting == 5:  # Upgrade Tree
                     self.game.change_state(UpgradeTreeState(self.game))
-                elif self.game.selected_setting == 5:  # Back
+                elif self.game.selected_setting == 6:  # Back
                     self.game.change_state(MenuState(self.game))
 
     def draw(self):

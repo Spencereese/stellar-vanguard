@@ -377,7 +377,7 @@ def test_sequel_features():
         print("OK R4 persistence survival bests coexist with highscores")
 
         from config import MODE_SURVIVAL, VERSION
-        assert VERSION.startswith('3.2')
+        assert VERSION.startswith('3.3')
         g_r4 = Game()
         g_r4.survival = True
         g_r4.game_mode = MODE_SURVIVAL
@@ -442,7 +442,7 @@ def test_sequel_features():
         print("OK R5 named highscore persistence + qualify gate")
 
         from config import VERSION as _ver_r5
-        assert _ver_r5.startswith('3.2')
+        assert _ver_r5.startswith('3.3')
         g5 = Game()
         g5.spawn_damage_number(100, 200, 42, crit=False)
         g5.spawn_damage_number(110, 210, 99, crit=True)
@@ -479,6 +479,39 @@ def test_sequel_features():
             _pers_mod._default_persistence = _old
         print("OK R5 damage numbers + pause a11y + name entry")
 
+        # === R6: optional 1280 stretch window toggle (960 default) ===
+        from persistence import Persistence as PersR6, DEFAULT_SETTINGS as _ds_r6
+        import persistence as _pers_mod_r6
+        import tempfile as _tf_r6
+        assert _ds_r6.get("window_width", 960) == 960
+        assert _ds_r6.get("window_height", 720) == 720
+        td6 = _tf_r6.mkdtemp(prefix="sv_r6_")
+        pers6 = PersR6(base_dir=td6)
+        _prev_pers = getattr(_pers_mod_r6, "_default_persistence", None)
+        _pers_mod_r6._default_persistence = pers6
+        try:
+            s6 = pers6.load_settings()
+            assert s6.get("window_width") == 960
+            g6 = Game()
+            assert "Window Size" in g6.setting_options
+            assert getattr(g6, "window_width", 960) == 960
+            assert getattr(g6, "window_height", 720) == 720
+            assert hasattr(g6, "toggle_window_size")
+            g6.toggle_window_size()
+            assert g6.window_width == 1280 and g6.window_height == 720
+            saved = pers6.load_settings()
+            assert saved.get("window_width") == 1280
+            assert g6._normalized_window_size(1280, 720) == (1280, 720)
+            assert g6._normalized_window_size(960, 720) == (960, 720)
+            assert g6._normalized_window_size(800, 600) == (960, 720)
+            g6.toggle_window_size()
+            assert g6.window_width == 960
+            assert pers6.load_settings().get("window_width") == 960
+            from config import VERSION as _ver_r6
+            assert _ver_r6.startswith("3.3")
+            print("OK R6 window stretch toggle (960 default / 1280 optional)")
+        finally:
+            _pers_mod_r6._default_persistence = _prev_pers
         # loadout select state stub
         from game_states import LoadoutSelectState
         los = LoadoutSelectState(g)
@@ -894,7 +927,7 @@ def test_headless_verifier_env_destr_abilities_keys():
 
 def main():
     """Run all tests"""
-    print("🛸 Space Shooter: Stellar Vanguard v3.2 - Test Suite")
+    print("🛸 Space Shooter: Stellar Vanguard v3.3 - Test Suite")
     print("=" * 40)
 
     tests = [
@@ -917,7 +950,7 @@ def main():
     print(f"Test Results: {passed}/{total} tests passed")
 
     if passed == total:
-        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.2 is ready to launch!")
+        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.3 is ready to launch!")
         return 0
     else:
         print("❌ Some tests failed. Please check the errors above.")

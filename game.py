@@ -27,9 +27,9 @@ stars = [(random.randint(0, 2*SCREEN_WIDTH), random.randint(0, SCREEN_HEIGHT)) f
 class Game:
     def __init__(self):
         # Pygame is already initialized in shooter.py
-        # v3 upgrade polish (PR12): default windowed (960x720) for UX + dev friendliness. Persisted 'fullscreen' setting respected.
-        # Never forces desktop FULLSCREEN unless explicitly enabled in settings. F11 toggle wired in game states.
-        # This removes the prior forced override noted in DESIGN.
+        # v3 upgrade polish (PR12) + R6: default windowed 960x720; optional 1280x720 stretch (matches virtual render base).
+        # Persisted fullscreen / window_* settings respected. F11 toggles fullscreen; Settings cycles window size.
+        # Never forces desktop FULLSCREEN unless explicitly enabled in settings.
         try:
             pers = get_persistence()
             s = pers.load_settings()
@@ -38,6 +38,19 @@ class Game:
             want_full = False
             s = {}
 
+        # R6: allowed windowed sizes — 960 (default) or 1280 (optional native stretch)
+        try:
+            ww = int(s.get('window_width', 960) or 960)
+            wh = int(s.get('window_height', 720) or 720)
+        except Exception:
+            ww, wh = 960, 720
+        if ww >= 1280:
+            ww, wh = 1280, 720
+        else:
+            ww, wh = 960, 720
+        self.window_width = ww
+        self.window_height = wh
+
         info = pygame.display.Info()
         global SCREEN_WIDTH, SCREEN_HEIGHT
         if want_full:
@@ -45,16 +58,11 @@ class Game:
             SCREEN_HEIGHT = info.current_h
             display_flags = pygame.FULLSCREEN
         else:
-            # R2 polish: windowed 960x720 (persisted window_* respected if present)
-            try:
-                SCREEN_WIDTH = int(s.get('window_width', 960) or 960)
-                SCREEN_HEIGHT = int(s.get('window_height', 720) or 720)
-            except Exception:
-                SCREEN_WIDTH = 960
-                SCREEN_HEIGHT = 720
+            SCREEN_WIDTH = self.window_width
+            SCREEN_HEIGHT = self.window_height
             display_flags = 0
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), display_flags)
-        pygame.display.set_caption("Space Shooter: Stellar Vanguard (v3.2)")
+        pygame.display.set_caption("Space Shooter: Stellar Vanguard (v3.3)")
         self.clock = pygame.time.Clock()
         self.fullscreen = want_full  # for toggle and HUD if wanted
         # Sync global screen size so enemy spawn (enemies.py), bullets etc use full res not stale 800
@@ -151,7 +159,7 @@ class Game:
         self.is_p2p = False
         # Initialize game variables
         self.menu_options = ["Play Game", "Multiplayer", "Shop & Upgrades", "Settings", "Quit"]
-        self.setting_options = ["Difficulty", "Music Volume", "SFX Volume", "Leaderboard", "Upgrade Tree", "Back"]
+        self.setting_options = ["Difficulty", "Music Volume", "SFX Volume", "Window Size", "Leaderboard", "Upgrade Tree", "Back"]
         self.selected_option = 0
         self.selected_setting = 0
         self.selected_item = 0
@@ -398,28 +406,30 @@ class Game:
         self.shake_timer = duration
         self.shake_intensity = intensity
 
-    def toggle_fullscreen(self):
-        """v3 polish: toggle between windowed and fullscreen, persist choice, recreate display + stars without losing run state."""
-        self.fullscreen = not getattr(self, 'fullscreen', False)
+    def _normalized_window_size(self, width=None, height=None):
+        """R6: clamp windowed size to 960x720 (default) or 1280x720 (optional stretch)."""
         try:
-            pers = get_persistence()
-            s = pers.load_settings()
-            s['fullscreen'] = self.fullscreen
-            if not self.fullscreen:
-                s['window_width'] = 960
-                s['window_height'] = 720
-            pers.save_settings(s)
+            ww = int(width if width is not None else getattr(self, 'window_width', 960) or 960)
+            wh = int(height if height is not None else getattr(self, 'window_height', 720) or 720)
         except Exception:
-            pass
+            ww, wh = 960, 720
+        if ww >= 1280:
+            return 1280, 720
+        return 960, 720
+
+    def _recreate_display(self):
+        """Apply fullscreen / windowed size to the live display + config globals + starfields."""
         info = pygame.display.Info()
         global SCREEN_WIDTH, SCREEN_HEIGHT
-        if self.fullscreen:
+        if getattr(self, 'fullscreen', False):
             SCREEN_WIDTH = info.current_w
             SCREEN_HEIGHT = info.current_h
             flags = pygame.FULLSCREEN
         else:
-            SCREEN_WIDTH = 960
-            SCREEN_HEIGHT = 720
+            ww, wh = self._normalized_window_size()
+            self.window_width, self.window_height = ww, wh
+            SCREEN_WIDTH = ww
+            SCREEN_HEIGHT = wh
             flags = 0
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), flags)
         try:
@@ -428,11 +438,45 @@ class Game:
             cfg.SCREEN_HEIGHT = SCREEN_HEIGHT
         except Exception:
             pass
-        # Recreate parallax stars for new res (keeps game feel)
         self.stars = [(random.randint(0, 2 * SCREEN_WIDTH), random.randint(0, SCREEN_HEIGHT)) for _ in range(300)]
         self.slow_stars = [(random.randint(0, 2 * SCREEN_WIDTH), random.randint(0, SCREEN_HEIGHT)) for _ in range(100)]
         self.fast_stars = [(random.randint(0, 2 * SCREEN_WIDTH), random.randint(0, SCREEN_HEIGHT)) for _ in range(100)]
-        # Optional: nudge renderer/camera if live, but state draw will pick up self.screen
+
+    def toggle_window_size(self):
+        """R6: cycle windowed size 960x720 <-> 1280x720 (native virtual stretch), persist, apply if windowed."""
+        cur_w, _ = self._normalized_window_size()
+        if cur_w >= 1280:
+            self.window_width, self.window_height = 960, 720
+        else:
+            self.window_width, self.window_height = 1280, 720
+        try:
+            pers = get_persistence()
+            s = pers.load_settings()
+            s['window_width'] = self.window_width
+            s['window_height'] = self.window_height
+            pers.save_settings(s)
+        except Exception:
+            pass
+        if not getattr(self, 'fullscreen', False):
+            self._recreate_display()
+        print(f"[Stellar Vanguard] Window size: {self.window_width}x{self.window_height} (fullscreen={getattr(self, 'fullscreen', False)})")
+
+    def toggle_fullscreen(self):
+        """v3 polish: toggle between windowed and fullscreen, persist choice, recreate display + stars without losing run state."""
+        self.fullscreen = not getattr(self, 'fullscreen', False)
+        try:
+            pers = get_persistence()
+            s = pers.load_settings()
+            s['fullscreen'] = self.fullscreen
+            # Preserve chosen window size when returning to windowed (R6)
+            ww, wh = self._normalized_window_size()
+            self.window_width, self.window_height = ww, wh
+            s['window_width'] = ww
+            s['window_height'] = wh
+            pers.save_settings(s)
+        except Exception:
+            pass
+        self._recreate_display()
         print(f"[Stellar Vanguard] Fullscreen: {self.fullscreen} @ {SCREEN_WIDTH}x{SCREEN_HEIGHT}")
 
     def apply_difficulty(self):
@@ -857,7 +901,7 @@ class Game:
             p = get_persistence()
             p.save_upgrades(self.upgrades.data if hasattr(self.upgrades, 'data') else {}, self.upgrades.levels if hasattr(self.upgrades, 'levels') else {})
             # save settings example in buy (PR12)
-            p.save_settings({'music_volume': self.music_volume, 'sfx_volume': self.sfx_volume, 'difficulty': self.difficulty, 'colorblind_mode': getattr(self, 'colorblind_mode', None), 'mouse_aim': getattr(self, 'mouse_aim', False)})
+            p.save_settings({'music_volume': self.music_volume, 'sfx_volume': self.sfx_volume, 'difficulty': self.difficulty, 'colorblind_mode': getattr(self, 'colorblind_mode', None), 'mouse_aim': getattr(self, 'mouse_aim', False), 'window_width': getattr(self, 'window_width', 960), 'window_height': getattr(self, 'window_height', 720), 'fullscreen': getattr(self, 'fullscreen', False)})
         except:
             pass
 

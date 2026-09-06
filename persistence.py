@@ -26,7 +26,7 @@ DEFAULT_SETTINGS = {
     "enable_experimental_mp": False,
     "mouse_aim": False,
     "fullscreen": False,  # v3 polish: default windowed (F11 to toggle); no forced fullscreen override
-    "window_width": 960,   # R2: windowed size persisted with F11 toggle
+    "window_width": 960,   # R2/R6: windowed size persisted (960 default; 1280 optional stretch)
     "window_height": 720,
 }
 

@@ -1652,21 +1652,28 @@ class Renderer:
         self.game.screen.blit(sfx_label, (SCREEN_WIDTH//2 - 100, 250))
         pygame.draw.rect(self.game.screen, WHITE, (SCREEN_WIDTH//2 - 100, 270, 200, 20), 2)
         pygame.draw.rect(self.game.screen, GREEN, (SCREEN_WIDTH//2 - 100, 270, int(game.sfx_volume * 200), 20))
+
+        # R6: Window size toggle (960 default / 1280 optional stretch matching virtual base)
+        ww = getattr(game, 'window_width', 960)
+        stretch_label = "1280x720 (native)" if ww >= 1280 else "960x720 (default)"
+        window_text = f"Window Size: {stretch_label}"
+        window_label = self.render_shadowed_text(window_text, GREEN if game.selected_setting == 3 else WHITE, game.small_font)
+        self.game.screen.blit(window_label, (SCREEN_WIDTH//2 - window_label.get_width()//2, 300))
         
         # Leaderboard option
-        leaderboard_text = self.render_shadowed_text("View Leaderboard", GREEN if game.selected_setting == 3 else WHITE, game.small_font)
-        self.game.screen.blit(leaderboard_text, (SCREEN_WIDTH//2 - leaderboard_text.get_width()//2, 310))
+        leaderboard_text = self.render_shadowed_text("View Leaderboard", GREEN if game.selected_setting == 4 else WHITE, game.small_font)
+        self.game.screen.blit(leaderboard_text, (SCREEN_WIDTH//2 - leaderboard_text.get_width()//2, 330))
         
         # Upgrade Tree option
-        upgrade_text = self.render_shadowed_text("Upgrade Tree", GREEN if game.selected_setting == 4 else WHITE, game.small_font)
-        self.game.screen.blit(upgrade_text, (SCREEN_WIDTH//2 - upgrade_text.get_width()//2, 340))
+        upgrade_text = self.render_shadowed_text("Upgrade Tree", GREEN if game.selected_setting == 5 else WHITE, game.small_font)
+        self.game.screen.blit(upgrade_text, (SCREEN_WIDTH//2 - upgrade_text.get_width()//2, 360))
         
         # Back option
-        back_text = self.render_shadowed_text("Back to Menu", GREEN if game.selected_setting == 5 else WHITE, game.small_font)
-        self.game.screen.blit(back_text, (SCREEN_WIDTH//2 - back_text.get_width()//2, 370))
+        back_text = self.render_shadowed_text("Back to Menu", GREEN if game.selected_setting == 6 else WHITE, game.small_font)
+        self.game.screen.blit(back_text, (SCREEN_WIDTH//2 - back_text.get_width()//2, 390))
         
-        hint_text = self.render_shadowed_text("Use ↑↓ to navigate, LEFT/RIGHT to adjust volumes, ENTER/A to select", WHITE, game.tiny_font)
-        self.game.screen.blit(hint_text, (SCREEN_WIDTH//2 - hint_text.get_width()//2, 420))
+        hint_text = self.render_shadowed_text("Use ↑↓ to navigate, LEFT/RIGHT volumes/window, ENTER/A to select", WHITE, game.tiny_font)
+        self.game.screen.blit(hint_text, (SCREEN_WIDTH//2 - hint_text.get_width()//2, 440))
         pygame.display.flip()
 
     def draw_credits(self, game):
