@@ -54,7 +54,7 @@ class Game:
                 SCREEN_HEIGHT = 720
             display_flags = 0
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), display_flags)
-        pygame.display.set_caption("Space Shooter: Stellar Vanguard (v3.0)")
+        pygame.display.set_caption("Space Shooter: Stellar Vanguard (v3.1)")
         self.clock = pygame.time.Clock()
         self.fullscreen = want_full  # for toggle and HUD if wanted
         # Sync global screen size so enemy spawn (enemies.py), bullets etc use full res not stale 800
@@ -319,6 +319,18 @@ class Game:
         # Initialize boss spawn tracking
         self.boss_spawned = False
         self.just_defeated_boss = False
+        # R4 Survival milestone shop + scoring persist
+        self.just_survival_milestone = False
+        self.preserve_run = False
+        self._survival_milestones_hit = set()
+        self.survival_milestone_interval = 60  # seconds between mid-run shops
+        try:
+            sb = pers.load_survival_best()
+            self.best_survival_time = float(sb.get('best_time', 0) or 0)
+            self.best_survival_score = int(sb.get('best_score', 0) or 0)
+        except Exception:
+            self.best_survival_time = 0.0
+            self.best_survival_score = 0
         # Star speed for background
         self.star_speed = 1
         # Game over timer
@@ -449,6 +461,10 @@ class Game:
         self.player.health = self.player.max_health
         self.boss_spawned = False
         self.just_defeated_boss = False
+        self.just_survival_milestone = False
+        self.preserve_run = False
+        self._survival_milestones_hit = set()
+        self.survival_time = 0.0
         self.freeze_timer = 0
         self.bg_x = 0
         self.wave = 1
@@ -630,6 +646,33 @@ class Game:
                         self.session.advance_wave(self.wave)
                     except Exception:
                         pass
+            # R4: real Survival clock + milestone shop (reuse post-boss ShopState claim-1 UX)
+            if not hasattr(self, 'survival_time') or self.survival_time is None:
+                self.survival_time = 0.0
+            self.survival_time = float(self.survival_time) + (1.0 / 60.0)
+            # 5-min achievement
+            if self.survival_time >= 300 and not self.achievements.get('survive_5_min', False):
+                self.achievements['survive_5_min'] = True
+            interval = int(getattr(self, 'survival_milestone_interval', 60) or 60)
+            hit = getattr(self, '_survival_milestones_hit', None)
+            if hit is None:
+                self._survival_milestones_hit = set()
+                hit = self._survival_milestones_hit
+            # Fire at 60, 120, 180... (not at 0)
+            milestone = int(self.survival_time // interval) * interval
+            if milestone >= interval and milestone not in hit:
+                hit.add(milestone)
+                stipend = 40 + (milestone // interval) * 20
+                self.coins = int(getattr(self, 'coins', 0)) + int(stipend * getattr(self, 'coin_multiplier', 1.0))
+                self.just_survival_milestone = True
+                self.preserve_run = True
+                self.survival_milestone_label = f"{milestone // 60}m" if milestone % 60 == 0 else f"{milestone}s"
+                self.wave_banner_timer = 90
+                try:
+                    self.change_state(ShopState(self))
+                    return
+                except Exception as ex:
+                    print('Survival milestone shop note:', ex)
 
         if getattr(self, 'boss_phase_announce_timer', 0) > 0:
             self.boss_phase_announce_timer -= 1
@@ -638,7 +681,9 @@ class Game:
         if self.game_mode == MODE_CAMPAIGN:
             if not hasattr(self, 'survival_time'):
                 self.survival_time = 0.0
-            self.survival_time += 1.0 / 60.0
+            # Campaign missions still use survival_time as level timer (separate from Survival mode above)
+            if not self.survival:
+                self.survival_time += 1.0 / 60.0
             if not hasattr(self, 'damage_taken_this_level'):
                 self.damage_taken_this_level = 0
             if not hasattr(self, 'powerups_collected_this_level'):

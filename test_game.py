@@ -360,6 +360,68 @@ def test_sequel_features():
         assert not b.is_charging  # telegraph first
         print("OK R3 wave themes + boss windup/phase depth")
 
+        # === R4: Survival milestone shop + scoring persist ===
+        from persistence import Persistence
+        import tempfile, os
+        td = tempfile.mkdtemp(prefix='sv_r4_')
+        pers_r4 = Persistence(base_dir=td)
+        # seed arcade scores then survival bests must coexist
+        pers_r4.save_highscores([900, 100])
+        best = pers_r4.record_survival_run(1500, 95.5)
+        assert best['best_score'] == 1500 and best['best_time'] >= 95.0
+        best2 = pers_r4.record_survival_run(1200, 200.0)  # time improves, score does not
+        assert best2['best_score'] == 1500 and best2['best_time'] >= 200.0
+        assert pers_r4.load_highscores()[0] == 900  # arcade scores preserved
+        loaded = pers_r4.load_survival_best()
+        assert loaded['best_score'] == 1500 and loaded['best_time'] >= 200.0
+        print("OK R4 persistence survival bests coexist with highscores")
+
+        from config import MODE_SURVIVAL, VERSION
+        assert VERSION.startswith('3.1')
+        g_r4 = Game()
+        g_r4.survival = True
+        g_r4.game_mode = MODE_SURVIVAL
+        g_r4.coins = 200
+        g_r4.style_rank = 'S'
+        g_r4.survival_time = 59.0
+        g_r4._survival_milestones_hit = set()
+        g_r4.preserve_run = False
+        # Force one update tick past 60s milestone via direct call path
+        g_r4.survival_time = 60.0  # exactly at milestone; update adds 1/60
+        # Simulate the milestone trigger body (same as game.update_game_logic Survival branch)
+        interval = 60
+        milestone = int(g_r4.survival_time // interval) * interval
+        assert milestone == 60
+        g_r4._survival_milestones_hit.add(milestone)
+        g_r4.just_survival_milestone = True
+        g_r4.preserve_run = True
+        g_r4.survival_milestone_label = '1m'
+        from game_states import ShopState, PlayingState
+        shop = ShopState(g_r4)
+        shop.enter()
+        assert shop.is_survival_milestone and shop.is_post_boss
+        assert shop.has_claimed_reward is False
+        assert len(shop.category_items) >= 4
+        assert any(c.get('skip') for c in shop.category_items)
+        # preserve_run on return
+        score_before = g_r4.score
+        coins_before = g_r4.coins
+        g_r4.score = 4242
+        skip_idx = next(i for i, c in enumerate(shop.category_items) if c.get('skip'))
+        g_r4.selected_item = skip_idx
+        import pygame as _pg2
+        evt2 = type('E', (), {'type': _pg2.KEYDOWN, 'key': _pg2.K_RETURN})()
+        shop.handle_event(evt2)
+        assert getattr(g_r4, 'preserve_run', False) or isinstance(g_r4.state, PlayingState)
+        # Playing enter with preserve_run must not wipe score
+        g_r4.preserve_run = True
+        g_r4.boss_spawned = False
+        ps = PlayingState(g_r4)
+        ps.enter()
+        assert g_r4.score == 4242, 'preserve_run must not reset Survival run'
+        assert g_r4.preserve_run is False
+        print("OK R4 Survival milestone shop (claim-1 reuse) + preserve_run")
+
         # loadout select state stub
         from game_states import LoadoutSelectState
         los = LoadoutSelectState(g)
@@ -775,7 +837,7 @@ def test_headless_verifier_env_destr_abilities_keys():
 
 def main():
     """Run all tests"""
-    print("🛸 Space Shooter: Stellar Vanguard v3.0 - Test Suite")
+    print("🛸 Space Shooter: Stellar Vanguard v3.1 - Test Suite")
     print("=" * 40)
 
     tests = [
@@ -798,7 +860,7 @@ def main():
     print(f"Test Results: {passed}/{total} tests passed")
 
     if passed == total:
-        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.0 is ready to launch!")
+        print("🎉 All tests passed! Space Shooter: Stellar Vanguard v3.1 is ready to launch!")
         return 0
     else:
         print("❌ Some tests failed. Please check the errors above.")

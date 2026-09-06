@@ -526,7 +526,10 @@ class ModifierChoiceState(GameState):
 
 class PlayingState(GameState):
     def enter(self):
-        if not self.game.boss_spawned:
+        # R4: Survival milestone shop return must not wipe the run
+        if getattr(self.game, 'preserve_run', False):
+            self.game.preserve_run = False
+        elif not self.game.boss_spawned:
             self.game.reset_game()
         # R2: ensure mode-menu loadout selection survives reset into Playing
         try:
@@ -854,6 +857,17 @@ class GameOverState(GameState):
             # Update in-memory
             self.game.high_scores = pers.load_highscores()
             self.game.high_score = self.game.high_scores[0] if self.game.high_scores else 0
+            # R4: Survival scoring persist (best time + best score)
+            if getattr(self.game, 'survival', False):
+                try:
+                    best = pers.record_survival_run(
+                        int(getattr(self.game, 'score', 0) or 0),
+                        float(getattr(self.game, 'survival_time', 0) or 0),
+                    )
+                    self.game.best_survival_time = float(best.get('best_time', 0) or 0)
+                    self.game.best_survival_score = int(best.get('best_score', 0) or 0)
+                except Exception:
+                    pass
             # save settings example (PR12 polish) e.g. current volumes/diff etc
             try:
                 # Merge into existing settings so F11 fullscreen (and other keys) are not wiped
@@ -910,12 +924,14 @@ class ShopState(GameState):
     def enter(self):
         self.game.play_music("menu_ambient")
         self.purchase_message_time = 0
-        self.is_post_boss = getattr(self.game, 'just_defeated_boss', False)
+        self.is_survival_milestone = bool(getattr(self.game, 'just_survival_milestone', False))
+        self.is_post_boss = bool(getattr(self.game, 'just_defeated_boss', False) or self.is_survival_milestone)
         self.skip_bonus = 50  # always set (main shop featured also calls generate which builds skip card)
         if self.is_post_boss:
-            # Consume flag
+            # Consume flags
             self.game.just_defeated_boss = False
-            # Modern roguelite post-boss reward: rank-gated free rerolls + claimed state
+            self.game.just_survival_milestone = False
+            # Modern roguelite post-boss / Survival milestone: rank-gated free rerolls + claimed state
             rank = getattr(self.game, 'style_rank', 'D')
             self.free_rerolls = 1 + (1 if rank in ('S', 'A') else (1 if rank == 'B' else 0))
             self.rerolls_remaining = self.free_rerolls
@@ -923,7 +939,11 @@ class ShopState(GameState):
             self.claimed_item_name = None
             self.post_boss_items = self._generate_post_boss_choices(3)
             self.category_items = self.post_boss_items
-            self.categories = ["boss rewards"]
+            if self.is_survival_milestone:
+                label = getattr(self.game, 'survival_milestone_label', 'milestone')
+                self.categories = [f"survival {label}"]
+            else:
+                self.categories = ["boss rewards"]
             self.current_category = 0
             self.game.selected_item = 0
         else:
@@ -1118,7 +1138,9 @@ class ShopState(GameState):
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 if getattr(self, 'is_post_boss', False):
-                    # Post-boss: always allow continue (even mid-claim or after)
+                    # Post-boss / Survival milestone: continue run
+                    if getattr(self, 'is_survival_milestone', False) or getattr(self.game, 'survival', False):
+                        self.game.preserve_run = True
                     self.game.change_state(PlayingState(self.game))
                 else:
                     self.game.change_state(GameOverState(self.game))
@@ -1213,6 +1235,8 @@ class ShopState(GameState):
                             self.purchase_message = f"Skipped — +{self.skip_bonus} coins!"
                             self.purchase_message_time = pygame.time.get_ticks()
                             # Skip immediately proceeds (agency)
+                            if getattr(self, 'is_survival_milestone', False) or (getattr(self, 'is_post_boss', False) and getattr(self.game, 'survival', False)):
+                                self.game.preserve_run = True
                             self.game.change_state(PlayingState(self.game))
                             return
                         self.purchase_message = f"Purchased {item['name']}!"
@@ -1324,6 +1348,8 @@ class ShopState(GameState):
                         if item.get('skip'):
                             self.purchase_message = f"Skipped — +{self.skip_bonus} coins!"
                             self.purchase_message_time = pygame.time.get_ticks()
+                            if getattr(self, 'is_survival_milestone', False) or (getattr(self, 'is_post_boss', False) and getattr(self.game, 'survival', False)):
+                                self.game.preserve_run = True
                             self.game.change_state(PlayingState(self.game))
                             return
                         self.purchase_message = f"Purchased {item['name']}!"
@@ -1355,6 +1381,8 @@ class ShopState(GameState):
                     self._update_category_items()
             elif event.button == 7:  # Start button to back
                 if getattr(self, 'is_post_boss', False):
+                    if getattr(self, 'is_survival_milestone', False) or getattr(self.game, 'survival', False):
+                        self.game.preserve_run = True
                     self.game.change_state(PlayingState(self.game))
                 else:
                     self.game.change_state(GameOverState(self.game))

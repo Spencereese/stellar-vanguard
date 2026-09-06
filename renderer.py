@@ -522,6 +522,21 @@ class Renderer:
         except Exception:
             pass
 
+        # R4: Survival timer + next milestone + best
+        try:
+            if getattr(game, 'survival', False):
+                st = float(getattr(game, 'survival_time', 0) or 0)
+                mins = int(st) // 60
+                secs = int(st) % 60
+                interval = int(getattr(game, 'survival_milestone_interval', 60) or 60)
+                nxt = ((int(st) // interval) + 1) * interval
+                best_t = float(getattr(game, 'best_survival_time', 0) or 0)
+                timer_txt = f"SURVIVE {mins:02d}:{secs:02d}  next shop {nxt}s  best {int(best_t)}s"
+                ts = self.render_shadowed_text(timer_txt, GOLD, game.tiny_font)
+                surface.blit(ts, (10, 42))
+        except Exception:
+            pass
+
         # Combo display
         if game.combo > 1:
             combo_text = f"Combo: x{game.combo}"
@@ -787,7 +802,7 @@ class Renderer:
             subtitle = self.render_shadowed_text("STELLAR VANGUARD", (100, 200, 255), game.small_font)
             surface.blit(subtitle, (vw//2 - subtitle.get_width()//2, int(165 * (vh / float(self.base_height)))))
 
-            tagline = self.render_shadowed_text("v3.0 - The Sequel", (180, 180, 255), game.tiny_font)
+            tagline = self.render_shadowed_text("v3.1 - Survival Depth", (180, 180, 255), game.tiny_font)
             surface.blit(tagline, (vw//2 - tagline.get_width()//2, int(195 * (vh / float(self.base_height)))))
 
             high_score_text = self.render_shadowed_text(f"High Score: {game.high_score:,}", GREEN, game.small_font)
@@ -810,7 +825,7 @@ class Renderer:
             controls_text = self.render_shadowed_text("Use ↑↓ or W/S to navigate • SPACE or ENTER to select", (150, 150, 150), game.tiny_font)
             surface.blit(controls_text, (vw//2 - controls_text.get_width()//2, vh - int(60 * (vh / float(self.base_height)))))
 
-            version_text = self.render_shadowed_text("v3.0", (150, 150, 200), game.tiny_font)
+            version_text = self.render_shadowed_text("v3.1", (150, 150, 200), game.tiny_font)
             surface.blit(version_text, (vw - version_text.get_width() - 10, vh - version_text.get_height() - 10))
 
         self._render_virtual_and_blit(_draw_menu_virtual, game)
@@ -1088,6 +1103,13 @@ class Renderer:
             surface.blit(bullets_text, (sw//2 - bullets_text.get_width()//2, int(300 * (sh / float(self.base_height)))))
             level_text = self.render_shadowed_text(f"Level Reached: {game.level}", YELLOW, game.small_font)
             surface.blit(level_text, (sw//2 - level_text.get_width()//2, int(350 * (sh / float(self.base_height)))))
+            if getattr(game, 'survival', False):
+                st = float(getattr(game, 'survival_time', 0) or 0)
+                best_t = float(getattr(game, 'best_survival_time', 0) or 0)
+                best_s = int(getattr(game, 'best_survival_score', 0) or 0)
+                surv_line = self.render_shadowed_text(
+                    f"Survived {int(st)}s  |  Best {int(best_t)}s / {best_s:,} pts", CYAN, game.small_font)
+                surface.blit(surv_line, (sw//2 - surv_line.get_width()//2, int(330 * (sh / float(self.base_height)))))
             achievements_text = self.render_shadowed_text("Achievements Unlocked:", GREEN, game.small_font)
             surface.blit(achievements_text, (sw//2 - achievements_text.get_width()//2, int(375 * (sh / float(self.base_height)))))
             ach_list = [k for k, v in game.achievements.items() if v]
@@ -1118,11 +1140,18 @@ class Renderer:
                 pygame.draw.circle(surface, WHITE, (sx, sy), 1)
 
             if hasattr(game.state, 'is_post_boss') and game.state.is_post_boss:
-                # Celebratory modern roguelite "boon" title (Hades-style)
-                shop_title = self.render_shadowed_text("BOSS DEFEATED — CLAIM YOUR REWARD", GOLD, game.font)
-                surface.blit(shop_title, (vw//2 - shop_title.get_width()//2, int(25 * (vh / float(self.base_height)))))
-                sub = self.render_shadowed_text("Pick ONE powerful upgrade (or SKIP for coins) — Rerolls limited by rank", (220, 200, 120), game.tiny_font)
-                surface.blit(sub, (vw//2 - sub.get_width()//2, int(55 * (vh / float(self.base_height)))))
+                if getattr(game.state, 'is_survival_milestone', False):
+                    label = getattr(game, 'survival_milestone_label', 'milestone')
+                    shop_title = self.render_shadowed_text(f"SURVIVAL MILESTONE ({label}) — CLAIM UPGRADE", GOLD, game.font)
+                    surface.blit(shop_title, (vw//2 - shop_title.get_width()//2, int(25 * (vh / float(self.base_height)))))
+                    sub = self.render_shadowed_text("Mid-run shop: pick ONE (or SKIP) — run continues after ESC", (220, 200, 120), game.tiny_font)
+                    surface.blit(sub, (vw//2 - sub.get_width()//2, int(55 * (vh / float(self.base_height)))))
+                else:
+                    # Celebratory modern roguelite "boon" title (Hades-style)
+                    shop_title = self.render_shadowed_text("BOSS DEFEATED — CLAIM YOUR REWARD", GOLD, game.font)
+                    surface.blit(shop_title, (vw//2 - shop_title.get_width()//2, int(25 * (vh / float(self.base_height)))))
+                    sub = self.render_shadowed_text("Pick ONE powerful upgrade (or SKIP for coins) — Rerolls limited by rank", (220, 200, 120), game.tiny_font)
+                    surface.blit(sub, (vw//2 - sub.get_width()//2, int(55 * (vh / float(self.base_height)))))
             else:
                 shop_title = self.render_shadowed_text("🛒 UPGRADE SHOP", WHITE, game.font)
                 surface.blit(shop_title, (vw//2 - shop_title.get_width()//2, int(30 * (vh / float(self.base_height)))))

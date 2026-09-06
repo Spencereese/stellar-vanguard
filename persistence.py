@@ -103,10 +103,21 @@ class Persistence:
         return [0] * 5   # original default behavior
 
     def save_highscores(self, scores: list):
+        # Preserve any existing survival bests when rewriting arcade/campaign scores
+        survival = {}
+        if os.path.exists(self.highscores_path):
+            try:
+                with open(self.highscores_path, "r") as f:
+                    prev = json.load(f) or {}
+                    survival = prev.get("survival") or {}
+            except Exception:
+                survival = {}
         data = {
             "schema": SCHEMA_VERSION,
-            "scores": [{"score": int(s), "date": datetime.now().isoformat()} for s in scores[:10]]
+            "scores": [{"score": int(s), "date": datetime.now().isoformat()} for s in scores[:10]],
         }
+        if survival:
+            data["survival"] = survival
         self._atomic_write(self.highscores_path, data)
 
         # Optional: also update legacy txt for very old tools
@@ -116,6 +127,67 @@ class Persistence:
                     f.write(f"{int(s)}\n")
         except Exception:
             pass
+
+    # ---------------- Survival bests (R4) ----------------
+    def load_survival_best(self) -> dict:
+        """Return {best_time: float seconds, best_score: int}. Defaults to zeros."""
+        best = {"best_time": 0.0, "best_score": 0}
+        if not os.path.exists(self.highscores_path):
+            return best
+        try:
+            with open(self.highscores_path, "r") as f:
+                data = json.load(f) or {}
+            surv = data.get("survival") or {}
+            best["best_time"] = float(surv.get("best_time", 0) or 0)
+            best["best_score"] = int(surv.get("best_score", 0) or 0)
+        except Exception:
+            pass
+        return best
+
+    def record_survival_run(self, score: int, time_s: float) -> dict:
+        """Update persisted Survival bests if this run improves either. Returns new bests."""
+        best = self.load_survival_best()
+        changed = False
+        try:
+            score = int(score or 0)
+            time_s = float(time_s or 0)
+        except Exception:
+            return best
+        if score > best.get("best_score", 0):
+            best["best_score"] = score
+            changed = True
+        if time_s > best.get("best_time", 0):
+            best["best_time"] = time_s
+            changed = True
+        if not changed:
+            return best
+        # Merge into highscores.json without dropping arcade scores
+        scores_payload = []
+        if os.path.exists(self.highscores_path):
+            try:
+                with open(self.highscores_path, "r") as f:
+                    prev = json.load(f) or {}
+                for entry in prev.get("scores", []):
+                    if isinstance(entry, dict):
+                        scores_payload.append(entry)
+                    else:
+                        scores_payload.append({"score": int(entry), "date": datetime.now().isoformat()})
+            except Exception:
+                scores_payload = []
+        if not scores_payload:
+            for s in self.load_highscores():
+                scores_payload.append({"score": int(s), "date": datetime.now().isoformat()})
+        data = {
+            "schema": SCHEMA_VERSION,
+            "scores": scores_payload[:10],
+            "survival": {
+                "best_time": float(best.get("best_time", 0) or 0),
+                "best_score": int(best.get("best_score", 0) or 0),
+                "updated": datetime.now().isoformat(),
+            },
+        }
+        self._atomic_write(self.highscores_path, data)
+        return best
 
     # ---------------- Settings ----------------
     def load_settings(self) -> dict:
